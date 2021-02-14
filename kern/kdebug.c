@@ -100,7 +100,9 @@ stab_binsearch(const struct Stab *stabs, int *region_left, int *region_right,
 //	instruction address, 'addr'.  Returns 0 if information was found, and
 //	negative if not.  But even if it returns negative it has stored some
 //	information into '*info'.
-//
+//	使用有关指定信息的信息填写“info”结构和指令地址“addr”。 
+//	如果找到信息，则返回0，否则返回-1。 
+//	但是即使它返回负数也已经存储了一些将信息放入“*info”。
 int
 debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 {
@@ -178,8 +180,8 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	There's a particular stabs type used for line numbers.
 	//	Look at the STABS documentation and <inc/stab.h> to find
 	//	which one.
-	
-	// Search within [lline, rline] for the line number stab.
+	// Your code here.
+	// 查阅STABS文档可以知道表示行号的成员是n_desc
 	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
 		// If found, set info->eip_line to the right line number.
 		// If not found, return -1.

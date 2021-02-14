@@ -45,6 +45,9 @@ seta20.2:
   # and segment translation that makes virtual addresses 
   # identical to their physical addresses, so that the 
   # effective memory map does not change during the switch.
+  # bootstrap 将寄存器 cr0 的末位更改为1，使处理器从实模式切换到保护模式。
+  # 而且分段映射的虚拟地址与其对应的实际地址相同，
+  # 因此有效内存映射在转换期间不会更改。
   lgdt    gdtdesc
   movl    %cr0, %eax
   orl     $CR0_PE_ON, %eax

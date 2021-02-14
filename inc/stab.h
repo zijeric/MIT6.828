@@ -39,13 +39,21 @@
 #define	N_ECOML		0xe8	// end common (local name)
 #define	N_LENG		0xfe	// length of preceding entry
 
-// Entries in the STABS table are formatted as follows.
+// STABS 表中的属性的格式如下
 struct Stab {
-	uint32_t n_strx;	// index into string table of name
-	uint8_t n_type;         // type of symbol
-	uint8_t n_other;        // misc info (usually empty)
-	uint16_t n_desc;        // description field
-	uintptr_t n_value;	// value of symbol
+	uint32_t n_strx;	// 指向.stabstr段的索引，stabstr表中存有该符号项的名字
+	/**
+	 * n_type 说明：
+	 *  N_SO: 表示文件
+	 *  N_SOL: 表示包含的文件
+	 *  N_FUN: 表示函数
+	 *  N_SLINE: 表示在文件中的行号
+	 * 文件(N_SO)和函数(N_FUN)项的 n_value 属性表示该文件或函数装载后的虚拟地址
+	 */
+	uint8_t n_type;         // 该符号项的类型
+	uint8_t n_other;        // 杂项信息(通常为 NULL)
+	uint16_t n_desc;        // 描述信息
+	uintptr_t n_value;	// 该符号项的值
 };
 
 #endif /* !JOS_STAB_H */

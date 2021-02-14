@@ -17,12 +17,18 @@ pte_t entry_pgtable[NPTENTRIES];
 // related to linking and static initializers, we use "x + PTE_P"
 // here, rather than the more standard "x | PTE_P".  Everywhere else
 // you should use "|" to combine flags.
+
+// 强制编译器分配给 entry_pgdir 的空间地址是4096字节(一页大小)对齐的
 __attribute__((__aligned__(PGSIZE)))
+// 页目录表是 uint32_t 类型长度为1024的数组
 pde_t entry_pgdir[NPDENTRIES] = {
 	// Map VA's [0, 4MB) to PA's [0, 4MB)
+	// 设置页目录表的第0项，映射虚拟地址[0, 4MB)到物理地址[0, 4MB)
 	[0]
 		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P,
 	// Map VA's [KERNBASE, KERNBASE+4MB) to PA's [0, 4MB)
+	// 设置页目录表的第 KERNBASE>>PDXSHIFT(0xF0000000>>22)=960 项
+	// 映射虚拟地址[0xF0000000, 0xF0000000+4MB)到物理地址[0, 4MB）
 	[KERNBASE>>PDXSHIFT]
 		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P + PTE_W
 };

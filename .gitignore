@@ -3,4 +3,9 @@
 
 # handin
 *-handin.tar.gz
+init.d
+init.s
+obj/
+stabs.txt
+jos.out
 
