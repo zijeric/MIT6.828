@@ -203,16 +203,14 @@ extern volatile pde_t uvpd[];     // VA of current page directory
  * 与 kern/pmap.h 中的 page2pa() 一起使用。
  */ 
 struct PageInfo {
-	// Next page on the free list.
 	// 用于pageInfo链表管理，指向空闲列表中的下一个页(结构)
 	struct PageInfo *pp_link;
 
-	// pp_ref is the count of pointers (usually in page table entries)
-	// to this page, for pages allocated using page_alloc.
-	// Pages allocated at boot time using pmap.c's
-	// boot_alloc do not have valid reference count fields.
 	// 该物理页被引用的次数，即被(map)映射到虚拟地址的数量（通常在页表条目中）
 	// 当引用数为 0，即可释放
+	// 在未来的实验中很可能将同样的物理页映射到多个虚拟地址，你需要在struct PageInfo的pp_ref域中保持物理页被引用的次数，当引用计数归0，页面不再被使用，可以被释放。
+	// 总的来说，引用计数应当等于物理页面在UTOP之下出现的次数（UTOP之上的物理页面大多在启动时被内核分配并且永远不应当被释放，所以不需要对其进行引用计数）。
+	// 引用计数也会被用来追踪指向页目录页的指针数，以及页目录对页表页的引用数。
 	uint16_t pp_ref;
 };
 

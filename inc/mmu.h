@@ -14,7 +14,8 @@
  */
 
 // A linear address 'la' has a three-part structure as follows:
-//
+// 线性地址“ la”有三部分结构，如下：
+// 
 // +--------10------+-------10-------+---------12----------+
 // | Page Directory |   Page Table   | Offset within Page  |
 // |      Index     |      Index     |                     |
@@ -25,14 +26,17 @@
 // The PDX, PTX, PGOFF, and PGNUM macros decompose linear addresses as shown.
 // To construct a linear address la from PDX(la), PTX(la), and PGOFF(la),
 // use PGADDR(PDX(la), PTX(la), PGOFF(la)).
+// PDX、PTX、PGOFF 和 PGNUM 宏分解线性地址，如下所示。
+// 从 PDX (la)、PTX(la)和 PGOFF(la)构造线性地址 la，
+// 使用 PGADDR(PDX(la)，PTX(la)，PGOFF(la))。
 
-// page number field of address
+// page number field of address 右移22位
 #define PGNUM(la)	(((uintptr_t) (la)) >> PTXSHIFT)
 
-// page directory index
+// page directory index	右移22位，与操作只保留低10位(0~9)
 #define PDX(la)		((((uintptr_t) (la)) >> PDXSHIFT) & 0x3FF)
 
-// page table index
+// page table index		右移22位，与操作只保留低10位(0~9)
 #define PTX(la)		((((uintptr_t) (la)) >> PTXSHIFT) & 0x3FF)
 
 // offset in page
@@ -55,15 +59,15 @@
 #define PDXSHIFT	22		// offset of PDX in a linear address
 
 // Page table/directory entry flags.
-#define PTE_P		0x001	// Present
-#define PTE_W		0x002	// Writeable
-#define PTE_U		0x004	// User
-#define PTE_PWT		0x008	// Write-Through
-#define PTE_PCD		0x010	// Cache-Disable
-#define PTE_A		0x020	// Accessed
-#define PTE_D		0x040	// Dirty
-#define PTE_PS		0x080	// Page Size
-#define PTE_G		0x100	// Global
+#define PTE_P		0x001	// Present		存在位
+#define PTE_W		0x002	// Writeable	可写位
+#define PTE_U		0x004	// User			用户1->(0,1,2,3), 管理员0->(0,1,2)
+#define PTE_PWT		0x008	// Write-Through	页级通写位，内存 or 高速缓存
+#define PTE_PCD		0x010	// Cache-Disable	页级高速缓存禁止位
+#define PTE_A		0x020	// Accessed		访问位，由CPU设置，1:已访问可换出到外存
+#define PTE_D		0x040	// Dirty		脏页位，针对页表项，CPU写时置为1
+#define PTE_PS		0x080	// Page Size	页大小位，0:4KB, 1:4MB
+#define PTE_G		0x100	// Global		全局位，是否为全局页，即存储在TLB
 
 // The PTE_AVAIL bits aren't used by the kernel or interpreted by the
 // hardware, so user processes are allowed to set them arbitrarily.
@@ -72,7 +76,7 @@
 // Flags in PTE_SYSCALL may be used in system calls.  (Others may not.)
 #define PTE_SYSCALL	(PTE_AVAIL | PTE_P | PTE_W | PTE_U)
 
-// Address in page table or page directory entry
+// 页表(页目录项)中的物理地址，将低12位(0~11)置为0
 #define PTE_ADDR(pte)	((physaddr_t) (pte) & ~0xFFF)
 
 // Control Register flags
@@ -81,7 +85,7 @@
 #define CR0_EM		0x00000004	// Emulation
 #define CR0_TS		0x00000008	// Task Switched
 #define CR0_ET		0x00000010	// Extension Type
-#define CR0_NE		0x00000020	// Numeric Errror
+#define CR0_NE		0x00000020	// Numeric Error
 #define CR0_WP		0x00010000	// Write Protect
 #define CR0_AM		0x00040000	// Alignment Mask
 #define CR0_NW		0x20000000	// Not Writethrough

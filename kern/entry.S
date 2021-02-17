@@ -10,9 +10,15 @@
 ###################################################################
 # The kernel (this code) is linked at address ~(KERNBASE + 1 Meg), 
 # but the bootloader loads it at address ~1 Meg.
-#	
+# 内核(这段代码)被链接到地址 ~(KERNBASE + 1 Meg)，
+# 但是bootloader在地址 ~1Meg 加载它。
+#
+# RELOC(x) 将变量x从它的链接地址映射到它在物理内存中的实际位置(它的加载地址)。
+#
 # RELOC(x) maps a symbol x from its link address to its actual
 # location in physical memory (its load address).	 
+# 那为什么要减0xF0000000呢？因为现在还没开启分页模式，entry_pgdir这个符号代表的地址又是以0xF0000000为基址的
+#（为什么？没有为什么，这个是在链接时，链接器根据/kern/kernel.ld中的. = 0xF0100000;来指定的。可以参考《程序员的自我修养》p127-使用ld链接脚本）
 ###################################################################
 
 #define	RELOC(x) ((x) - KERNBASE)
@@ -56,6 +62,7 @@ entry:
 	# Load the physical address of entry_pgdir into cr3.  entry_pgdir
 	# is defined in entrypgdir.c.
 	# 在使用 mem_init 配置分页系统之前，我们注意到已经使用以下代码在 entry.S 中配置了虚拟内存子系统：
+	# 总结来说就是entry_pgdir结构所在的物理内存在RELOC(entry_pgdir)处。接下来将页目录的物理地址复制到cr3寄存器，并且将cr0 的最高位PG位设置为1后，正式打开分页功能。
 	movl	$(RELOC(entry_pgdir)), %eax
 	movl	%eax, %cr3			# cr3 寄存器保存页目录表的物理基地址
 	# Turn on paging.

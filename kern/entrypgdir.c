@@ -28,7 +28,7 @@ pde_t entry_pgdir[NPDENTRIES] = {
 		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P,
 	// Map VA's [KERNBASE, KERNBASE+4MB) to PA's [0, 4MB)
 	// 设置页目录表的第 KERNBASE>>PDXSHIFT(0xF0000000>>22)=960 项
-	// 映射虚拟地址[0xF0000000, 0xF0000000+4MB)到物理地址[0, 4MB）
+	// 映射虚拟地址[0xF0000000, 0xF0000000+4MB)到物理地址[0, 4MB)
 	[KERNBASE>>PDXSHIFT]
 		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P + PTE_W
 };

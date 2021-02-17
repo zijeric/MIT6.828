@@ -9,7 +9,7 @@ enum {
 	E_BAD_ENV	,	// Environment doesn't exist or otherwise
 				// cannot be used in requested action
 	E_INVAL		,	// Invalid parameter
-	E_NO_MEM	,	// Request failed due to memory shortage
+	E_NO_MEM	,	// 由于内存不足，请求失败
 	E_NO_FREE_ENV	,	// Attempt to create a new environment beyond
 				// the maximum allowed
 	E_FAULT		,	// Memory fault
