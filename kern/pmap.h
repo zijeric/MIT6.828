@@ -77,8 +77,9 @@ void	tlb_invalidate(pde_t *pgdir, void *va);
 static inline physaddr_t
 page2pa(struct PageInfo *pp)
 {
-	// pages: 物理页的状态描述数组
-	return (pp - pages) << PGSHIFT;			// (<<12 = *1000H = *PGSIZE)
+	// pages: 物理页的状态描述数组首地址，(pp - pages)就是pp相对于数组的偏移量offset
+	// (<<12 = *1000H = *PGSIZE)
+	return (pp - pages) << PGSHIFT;	
 }
 
 // 返回物理地址对应的物理页结构

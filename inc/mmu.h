@@ -33,13 +33,13 @@
 // page number field of address 右移22位
 #define PGNUM(la)	(((uintptr_t) (la)) >> PTXSHIFT)
 
-// page directory index	右移22位，与操作只保留低10位(0~9)
+// page directory index	右移22位，与操作只保留低10位(9~0)
 #define PDX(la)		((((uintptr_t) (la)) >> PDXSHIFT) & 0x3FF)
 
-// page table index		右移22位，与操作只保留低10位(0~9)
+// page table index		右移22位，与操作只保留低10位(9~0)
 #define PTX(la)		((((uintptr_t) (la)) >> PTXSHIFT) & 0x3FF)
 
-// offset in page
+// offset in page: page frame index		与操作只保留低12位(11~0)
 #define PGOFF(la)	(((uintptr_t) (la)) & 0xFFF)
 
 // construct linear address from indexes and offset
@@ -60,7 +60,7 @@
 
 // Page table/directory entry flags.
 #define PTE_P		0x001	// Present		存在位
-#define PTE_W		0x002	// Writeable	可写位
+#define PTE_W		0x002	// Writeable	可写位，同时影响 kernel 和 user
 #define PTE_U		0x004	// User			用户1->(0,1,2,3), 管理员0->(0,1,2)
 #define PTE_PWT		0x008	// Write-Through	页级通写位，内存 or 高速缓存
 #define PTE_PCD		0x010	// Cache-Disable	页级高速缓存禁止位
@@ -76,7 +76,7 @@
 // Flags in PTE_SYSCALL may be used in system calls.  (Others may not.)
 #define PTE_SYSCALL	(PTE_AVAIL | PTE_P | PTE_W | PTE_U)
 
-// 页表(页目录项)中的物理地址，将低12位(0~11)置为0
+// 返回页表(页目录项)中的PPN索引，将低12位(0~11) Flags 状态位置为0
 #define PTE_ADDR(pte)	((physaddr_t) (pte) & ~0xFFF)
 
 // Control Register flags
