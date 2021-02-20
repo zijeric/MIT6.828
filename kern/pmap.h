@@ -8,6 +8,7 @@
 
 #include <inc/memlayout.h>
 #include <inc/assert.h>
+struct Env;
 
 extern char bootstacktop[], bootstack[];
 
@@ -71,6 +72,9 @@ struct PageInfo *page_lookup(pde_t *pgdir, void *va, pte_t **pte_store);
 void	page_decref(struct PageInfo *pp);
 
 void	tlb_invalidate(pde_t *pgdir, void *va);
+
+int	user_mem_check(struct Env *env, const void *va, size_t len, int perm);
+void	user_mem_assert(struct Env *env, const void *va, size_t len, int perm);
 
 // 每个物理页对应一个strcut PageInfo和一个物理页号PPN和唯一的物理首地址
 // 返回物理页结构对应的物理地址，physaddr_t(uint32_t) 自定义的物理地址类型

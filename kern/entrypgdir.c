@@ -3,21 +3,15 @@
 
 pte_t entry_pgtable[NPTENTRIES];
 
-// The entry.S page directory maps the first 4MB of physical memory
-// starting at virtual address KERNBASE (that is, it maps virtual
-// addresses [KERNBASE, KERNBASE+4MB) to physical addresses [0, 4MB)).
-// We choose 4MB because that's how much we can map with one page
-// table and it's enough to get us through early boot.  We also map
-// virtual addresses [0, 4MB) to physical addresses [0, 4MB); this
-// region is critical for a few instructions in entry.S and then we
-// never use it again.
-//
-// Page directories (and page tables), must start on a page boundary,
-// hence the "__aligned__" attribute.  Also, because of restrictions
-// related to linking and static initializers, we use "x + PTE_P"
-// here, rather than the more standard "x | PTE_P".  Everywhere else
-// you should use "|" to combine flags.
-
+/**
+ * entry.S 页目录映射从虚拟地址 KERNBASE 开始的前 4MB 物理内存
+ * (即，它将虚拟地址[KERNBASE, KERNBASE+4MB)映射到物理地址[0, 4MB))。
+ * 之所以选择4MB，是因为这是一个页表可以映射的大小，足够我们度过早期的引导。我们还将虚拟地址[0,4MB)映射到物理地址[0,4MB);
+ * 这个区域对于 entry.S 的一些指令是至关重要的。之后我们就再也不用它了。
+ * 
+ * 页目录(和页表)必须从 page boundary(页对齐格式) 开始，因此使用"__aligned__"属性。此外，由于与链接和静态初始化器相关的限制，
+ * 我们在这里使用“x + PTE_P”，而不是更标准的“x | PTE_P”。在其他地方，你应该使用“|”来组合 flags。
+ */ 
 // 强制编译器分配给 entry_pgdir 的空间地址是4096字节(一页大小)对齐的
 __attribute__((__aligned__(PGSIZE)))
 // 页目录表是 uint32_t 类型长度为1024的数组
@@ -33,8 +27,7 @@ pde_t entry_pgdir[NPDENTRIES] = {
 		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P + PTE_W
 };
 
-// Entry 0 of the page table maps to physical page 0, entry 1 to
-// physical page 1, etc.
+// 页表的第0项映射到物理页第0页，第1项映射到物理页第1页，等等。
 __attribute__((__aligned__(PGSIZE)))
 pte_t entry_pgtable[NPTENTRIES] = {
 	0x000000 | PTE_P | PTE_W,

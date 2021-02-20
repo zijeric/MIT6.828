@@ -8,18 +8,21 @@
 
 #include <kern/pmap.h>
 #include <kern/kclock.h>
+#include <kern/env.h>
 
-// These variables are set by i386_detect_memory()
+// 通过 i386_detect_memory() 对 npages 和 npages_basemem 赋值
 size_t npages;					// 物理内存量（以页为单位）
 static size_t npages_basemem;	// 基本内存量（以页为单位）
 
-// These variables are set in mem_init()
-pde_t *kern_pgdir;			// Kernel's initial page directory
+// 这些变量在 mem_init() 中赋值
+// 内核初始化的页目录
+pde_t *kern_pgdir;
 // 所有 Page 在内存（物理内存）中的存放是连续的，存放于 pages 处，可以通过数组的形式访问各个 Page，
 // 而 pages 紧接于 kern_pgdir 页目录之上，对应物理和虚拟内存布局也就是在kernel向上的紧接着的高地址部分连续分布着 pages 数组。
 // Physical page state array 页数组，数组中第 i 个成员代表内存中第 i 个 page，因此，物理地址和数组索引很方便相换算。
 struct PageInfo *pages;
-static struct PageInfo *page_free_list;	// Free list of physical pages
+// 空闲物理页链表
+static struct PageInfo *page_free_list;
 
 /**
  * check_page_alloc 这一行之上进行的操作汇总如下。
@@ -53,7 +56,7 @@ i386_detect_memory(void)
 
 	// Use CMOS calls to measure available base & extended memory.
 	// (CMOS calls return results in kilobytes.)
-	// 调用 CMOS 来测量可用的基本内存和扩展内存。（CMOS 调用返回的结果以千字节（KB）为单位。）
+	// 调用 CMOS 来测量可用的基本内存和扩展内存。（CMOS 调用返回的结果以 KB 作为单位。）
 	basemem = nvram_read(NVRAM_BASELO);
 	extmem = nvram_read(NVRAM_EXTLO);
 	ext16mem = nvram_read(NVRAM_EXT16LO) * 64;
@@ -68,7 +71,7 @@ i386_detect_memory(void)
 	else
 		totalmem = basemem;
 
-	// CMOS 调用返回的结果以千字节（KB）为单位
+	// CMOS 调用返回的结果以 KB 为单位
 	npages = totalmem / (PGSIZE / 1024);
 	npages_basemem = basemem / (PGSIZE / 1024);
 
@@ -105,7 +108,7 @@ static void *
 boot_alloc(uint32_t n)
 {
 	// 下一个空闲内存的首字节虚拟地址
-	static char *nextfree;	// virtual address of next byte of free memory
+	static char *nextfree;
 	char *result;
 
 	// 从 linker 中获取内核的最后一个字节的地址 end，将这个指针的数值向上对齐到 4096 的整数倍。
@@ -121,7 +124,7 @@ boot_alloc(uint32_t n)
 	// 既然char end[]是通过linker自动获得的，并且指向内核bss段的结尾，也就是说接下来的空间都是linker过程没有分配的虚拟地址。
 	// 所以需要从end开始，分配n字节的空间，更新nextfree并且保持它对齐。
 
-	// 分配足够大的块以容纳 'n' 个字节，然后更新 nextfree
+	// 分配足够大的内存块以容纳 'n' 个字节，然后更新 nextfree
 	// 确保 nextfree 与 PGSIZE 的倍数保持对齐
 	// Allocate a chunk large enough to hold 'n' bytes, then update
 	// nextfree.  Make sure nextfree is kept aligned
@@ -174,12 +177,9 @@ mem_init(void)
 	// 其中得到的内存信息是整数 npages，代表现有内存的 page 个数(所需 PageInfo 结构体的数量)
 	i386_detect_memory();
 
-	// Remove this line when you're ready to test this function.
-	// panic("mem_init: This function is not finished\n");
-
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
-	// 2.创建一个正式的页目录(一个页的大小)替换在kern/entry.S的entry_pgdir，并设置权限。
+	// 2.创建一个正式的页目录(一个页的大小)替换在 kern/entry.S 的 entry_pgdir，并设置权限。
 	kern_pgdir = (pde_t *) boot_alloc(PGSIZE);
 	memset(kern_pgdir, 0, PGSIZE);
 
@@ -188,7 +188,7 @@ mem_init(void)
 	// a virtual page table at virtual address UVPT.
 	// (For now, you don't have understand the greater purpose of the
 	// following line.)
-	// 递归地将页目录 PD 本身作为页表插入，以在虚拟地址 UVPT 处形成一个虚拟页表。
+	// 递归地将页目录 PD 自身作为页表插入，以在虚拟地址 UVPT 处形成一个虚拟页表。
 	//（到目前为止，您还不了解下一行的更多用途。）
 
 	// Permissions: kernel R, user R
@@ -199,7 +199,7 @@ mem_init(void)
 	// 查找addr对应的物理页地址的方法如下：
 	// 构造虚拟地址vaddr = UVPT[31:22]|PDX|PTX|00在虚拟内存空间里查询。
 	// 根据二级页表翻译机制：
-	// 1. 系统首先取出vaddr的前10位，即UVPT[31:22]，去页目录里查询，根据
+	// 1. 系统首先取出 vaddr 的前10位，即UVPT[31:22]，去页目录里查询，根据
 	kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir) | PTE_U | PTE_P;
 	//    注意UVPT[31:22]等价于PDX(UVPT)，所以得到的二级页表地址A0，还是页目录pgdir本身。
 	// 2. 再取出vaddr的中间10位，即PDX，去二级页表中A0（即页目录），
@@ -231,6 +231,10 @@ mem_init(void)
 	// cprintf("pages in pmap.c: %08x", pages);
 
 	//////////////////////////////////////////////////////////////////////
+	// Make 'envs' point to an array of size 'NENV' of 'struct Env'.
+	// LAB 3: Your code here.
+
+	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
 	// up the list of free physical pages. Once we've done so, all further
 	// memory management will go through the page_* functions. In
@@ -254,6 +258,14 @@ mem_init(void)
 	// 将虚拟地址的 UPAGES 映射到物理地址pages数组开始的位置(权限：用户只读)
 	// 默认在映射时分配 PTE_P 权限
 	boot_map_region(kern_pgdir, UPAGES, PTSIZE, PADDR(pages), PTE_U);
+
+	//////////////////////////////////////////////////////////////////////
+	// Map the 'envs' array read-only by the user at linear address UENVS
+	// (ie. perm = PTE_U | PTE_P).
+	// Permissions:
+	//    - the new image at UENVS  -- kernel R, user R
+	//    - envs itself -- kernel RW, user NONE
+	// LAB 3: Your code here.
 
 	//////////////////////////////////////////////////////////////////////
 	// 使用 bootstack 所指的物理内存作为内核堆栈。内核堆栈从虚拟地址 KSTACKTOP 向下扩展
@@ -660,6 +672,51 @@ tlb_invalidate(pde_t *pgdir, void *va)
 	invlpg(va);
 }
 
+static uintptr_t user_mem_check_addr;
+
+//
+// Check that an environment is allowed to access the range of memory
+// [va, va+len) with permissions 'perm | PTE_P'.
+// Normally 'perm' will contain PTE_U at least, but this is not required.
+// 'va' and 'len' need not be page-aligned; you must test every page that
+// contains any of that range.  You will test either 'len/PGSIZE',
+// 'len/PGSIZE + 1', or 'len/PGSIZE + 2' pages.
+//
+// A user program can access a virtual address if (1) the address is below
+// ULIM, and (2) the page table gives it permission.  These are exactly
+// the tests you should implement here.
+//
+// If there is an error, set the 'user_mem_check_addr' variable to the first
+// erroneous virtual address.
+//
+// Returns 0 if the user program can access this range of addresses,
+// and -E_FAULT otherwise.
+//
+int
+user_mem_check(struct Env *env, const void *va, size_t len, int perm)
+{
+	// LAB 3: Your code here.
+
+	return 0;
+}
+
+//
+// Checks that environment 'env' is allowed to access the range
+// of memory [va, va+len) with permissions 'perm | PTE_U | PTE_P'.
+// If it can, then the function simply returns.
+// If it cannot, 'env' is destroyed and, if env is the current
+// environment, this function will not return.
+//
+void
+user_mem_assert(struct Env *env, const void *va, size_t len, int perm)
+{
+	if (user_mem_check(env, va, len, perm | PTE_U) < 0) {
+		cprintf("[%08x] user_mem_check assertion failure for "
+			"va %08x\n", env->env_id, user_mem_check_addr);
+		env_destroy(env);	// may not return
+	}
+}
+
 
 // --------------------------------------------------------------
 // Checking functions.
@@ -827,6 +884,10 @@ check_kern_pgdir(void)
 	for (i = 0; i < n; i += PGSIZE)
 		assert(check_va2pa(pgdir, UPAGES + i) == PADDR(pages) + i);
 
+	// check envs array (new test for lab 3)
+	n = ROUNDUP(NENV*sizeof(struct Env), PGSIZE);
+	for (i = 0; i < n; i += PGSIZE)
+		assert(check_va2pa(pgdir, UENVS + i) == PADDR(envs) + i);
 
 	// check phys mem
 	for (i = 0; i < npages * PGSIZE; i += PGSIZE)
@@ -843,6 +904,7 @@ check_kern_pgdir(void)
 		case PDX(UVPT):
 		case PDX(KSTACKTOP-1):
 		case PDX(UPAGES):
+		case PDX(UENVS):
 			assert(pgdir[i] & PTE_P);
 			break;
 		default:
