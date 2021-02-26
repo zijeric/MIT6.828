@@ -1,5 +1,5 @@
 /* See COPYRIGHT for copyright information. */
-
+// 系统调用实现代码
 #include <inc/x86.h>
 #include <inc/error.h>
 #include <inc/string.h>

@@ -1,3 +1,4 @@
+// 陷阱处理的公共定义
 #ifndef JOS_INC_TRAP_H
 #define JOS_INC_TRAP_H
 
@@ -55,6 +56,7 @@ struct PushRegs {
 	uint32_t reg_eax;
 } __attribute__((packed));
 
+// 当环境不运行时被保存的环境帧(环境的寄存器值)，主要用于上下文切换
 struct Trapframe {
 	struct PushRegs tf_regs;
 	uint16_t tf_es;

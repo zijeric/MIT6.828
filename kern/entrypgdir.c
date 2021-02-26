@@ -27,6 +27,7 @@ pde_t entry_pgdir[NPDENTRIES] = {
 		= ((uintptr_t)entry_pgtable - KERNBASE) + PTE_P + PTE_W
 };
 
+// 通过手写、静态初始化页目录和页表映射了前4M内存空间，(__aligned__(PGSIZE): 页对齐
 // 页表的第0项映射到物理页第0页，第1项映射到物理页第1页，等等。
 __attribute__((__aligned__(PGSIZE)))
 pte_t entry_pgtable[NPTENTRIES] = {

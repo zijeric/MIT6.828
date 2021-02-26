@@ -1,5 +1,5 @@
 /* See COPYRIGHT for copyright information. */
-
+// 内核中私有陷阱处理定义
 #ifndef JOS_KERN_TRAP_H
 #define JOS_KERN_TRAP_H
 #ifndef JOS_KERNEL

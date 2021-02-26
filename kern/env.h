@@ -1,5 +1,5 @@
 /* See COPYRIGHT for copyright information. */
-
+// 用户环境的内核私有定义
 #ifndef JOS_KERN_ENV_H
 #define JOS_KERN_ENV_H
 

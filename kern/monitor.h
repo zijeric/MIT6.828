@@ -16,4 +16,11 @@ int mon_help(int argc, char **argv, struct Trapframe *tf);
 int mon_kerninfo(int argc, char **argv, struct Trapframe *tf);
 int mon_backtrace(int argc, char **argv, struct Trapframe *tf);
 
+// 输出所有物理页的映射
+int showmappings(int argc, char **argv, struct Trapframe *tf);
+// 可以在指定的物理页上设置或清除一个flags标志位 (P|W|U)
+int setm(int argc, char **argv, struct Trapframe *tf);
+// 输出虚拟地址对应的物理内存地址
+int showvm(int argc, char **argv, struct Trapframe *tf);
+
 #endif	// !JOS_KERN_MONITOR_H

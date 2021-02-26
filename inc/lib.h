@@ -3,7 +3,11 @@
 // This library is roughly our OS's version of a standard C library,
 // and is intended to be linked into all user-mode applications
 // (NOT the kernel or boot loader).
-
+/**
+ * 用户环境(模式)支持库的主要公共头文件，其代码位于lib目录中。
+ * 这个库大致是我们操作系统的标准C库版本，旨在链接到所有用户模式应用程序
+ * (而不是内核或引导加载程序)。
+ */ 
 #ifndef JOS_INC_LIB_H
 #define JOS_INC_LIB_H 1
 

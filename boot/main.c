@@ -70,8 +70,6 @@ void bootmain(void)
 
 	// 将内核的各个段加载进入内存，ph++(struct Proghdr)
 	for (; ph < eph; ph++)
-		// p_pa is the load address of this segment (as well
-		// as the physical address)
 		// p_pa: 目标加载地址(期望包含该段的目的物理地址: 0x100000)，由 kernel.ld 决定内核的起始物理地址
 		// p_memsz: 在内存中的大小，p_offset: 被读取时的偏移量
 		readseg(ph->p_pa, ph->p_memsz, ph->p_offset);
@@ -79,8 +77,6 @@ void bootmain(void)
 		// 初始当BIOS切换到boot loader时，它还没有开始相应的装载工作，所以这个时候看所有的8个word全是0。
 		// 而当boot loader进入内核运行时，这个时候内核已经装载完毕，所以从0x00100000开始就是内核ELF文件的文件内容了。
 
-	// call the entry point from the ELF header
-	// note: does not return!
 	// bootstrap 执行的最后一条指令：将内核ELF文件载入内存后，从ELF文件头调用内核入口地址 bootmain, 且永不返回。
 	((void (*)(void))(ELFHDR->e_entry))();
 }

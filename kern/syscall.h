@@ -1,3 +1,4 @@
+// 用于系统调用处理的内核私有定义
 #ifndef JOS_KERN_SYSCALL_H
 #define JOS_KERN_SYSCALL_H
 #ifndef JOS_KERNEL

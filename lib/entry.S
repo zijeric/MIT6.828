@@ -1,3 +1,4 @@
+// 用户环境的汇编语言入口点
 #include <inc/mmu.h>
 #include <inc/memlayout.h>
 

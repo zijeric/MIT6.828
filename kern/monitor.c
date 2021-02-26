@@ -11,9 +11,12 @@
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
 #include <kern/trap.h>
+#include <kern/pmap.h>
 
 #define CMDBUF_SIZE 80 // enough for one VGA text line
 
+// 所有输入的命令通过 Command 数组进行管理，通过函数指针 func 进行调用。
+// 因此如果增加命令，只需要在数组增加元组即可，注意，要在 kern/monitor.h 增加函数声明
 struct Command
 {
 	const char *name;
@@ -26,6 +29,9 @@ static struct Command commands[] = {
 	{"help", "Display this list of commands", mon_help},
 	{"kerninfo", "Display information about the kernel", mon_kerninfo},
 	{"backtrace", "Display backtrace information", mon_backtrace},
+	{"showmappings", "Display all of the physical page mappings", mon_showmappings},
+	{"setperm", "Set or clear a flag in a specific page", mon_setperm},
+	{"showmem", "Display memory", mon_showmem},
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -169,4 +175,129 @@ void monitor(struct Trapframe *tf)
 			if (runcmd(buf, tf) < 0)
 				break;
 	}
+}
+/**
+ * 将字符串转换为地址
+ */ 
+uint32_t str2add(char* buf) {
+	uint32_t res = 0;
+	buf += 2; //0x...
+	while (*buf) { 
+		if (*buf >= 'a') *buf = *buf-'a'+'0'+10;//aha
+		res = res*16 + *buf - '0';
+		++buf;
+	}
+	return res;
+}
+
+/**
+ * 输出页表页项 pte_t 的 flags 信息
+ */ 
+void pprint(pte_t *pte) {
+	cprintf("PTE_P: %x, PTE_W: %x, PTE_U: %x\n", 
+		*pte&PTE_P, *pte&PTE_W, *pte&PTE_U);
+}
+
+/**
+ * 输出所有物理页的映射
+ * 
+ * strtol 函数
+ * long int strtol(const char *nptr,char **endptr,int base);
+ * 作用是将字符串转为整数，可以通过 base 指定进制，会将第一个非法字符的指针写入 endptr 中。所以相比 atoi 函数，可以检查是否转换成功。
+ * 
+ * pgdir_walk 函数的返回情况有几种？
+ * if ( !cur_pte || !(*cur_pte & PTE_P)) 非常容易遗漏第二个条件。注意到，pgdir_walk 这个函数返回值可能为NULL，也可能是一个pte_t *，而 pte_t * 分为两种情况，一种是该二级页表项内容还未插入，所以 PTE_P 这个位为0。另一种是已经插入。
+ * 
+ * 如何输出 permission
+ * 这个就自由发挥了，一共有9个flag，我只选了 lab2 需要用到的3个。
+ */ 
+int
+mon_showmappings(int argc, char **argv, struct Trapframe *tf)
+{
+	// 参数检查
+	if (argc != 3) {
+		cprintf("Require 2 virtual address as arguments.\n");
+		return -1;
+	}
+	char *errChar;
+	uintptr_t start_addr = strtol(argv[1], &errChar, 16);
+	if (*errChar) {
+		cprintf("Invalid virtual address: %s.\n", argv[1]);
+		return -1;
+	}
+	uintptr_t end_addr = strtol(argv[2], &errChar, 16);
+	if (*errChar) {
+		cprintf("Invalid virtual address: %s.\n", argv[2]);
+		return -1;
+	}
+	if (start_addr > end_addr) {
+		cprintf("Address 1 must be lower than address 2\n");
+		return -1;
+	}
+
+	// 按页对齐
+	start_addr = ROUNDDOWN(start_addr, PGSIZE);
+	end_addr = ROUNDUP(end_addr, PGSIZE);
+
+	// 开始循环
+	uintptr_t cur_addr = start_addr;
+	while (cur_addr <= end_addr) {
+		pte_t *cur_pte = pgdir_walk(kern_pgdir, (void *) cur_addr, 0);
+		// 记录自己一个错误
+		// if ( !cur_pte) {
+		if ( !cur_pte || !(*cur_pte & PTE_P)) {
+			cprintf( "Virtual address [%08x] - not mapped\n", cur_addr);
+		} 
+		else {
+			cprintf( "Virtual address [%08x] - physical address [%08x], permission: ", cur_addr, PTE_ADDR(*cur_pte));
+			char perm_PS = (*cur_pte & PTE_PS) ? 'S':'-';
+			char perm_W = (*cur_pte & PTE_W) ? 'W':'-';
+			char perm_U = (*cur_pte & PTE_U) ? 'U':'-';
+			// 进入 else 分支说明 PTE_P 肯定为真了
+			cprintf( "-%c----%c%cP\n", perm_PS, perm_U, perm_W);
+		}
+		cur_addr += PGSIZE;
+	}
+	return 0;
+}
+
+/**
+ * 可以在指定的物理页上设置或清除一个flags标志位 (P|W|U)
+ */ 
+int mon_setperm(int argc, char **argv, struct Trapframe *tf) {
+	if (argc == 1) {
+		cprintf("Usage: setperm 0xaddr [0|1: clear or set] [P|W|U]\n");
+		return 0;
+	}
+	uint32_t addr = str2add(argv[1]);
+	pte_t *pte = pgdir_walk(kern_pgdir, (void *)addr, 1);
+	cprintf("%x before setperm: ", addr);
+	pprint(pte);
+	uint32_t perm = 0;
+	if (argv[3][0] == 'P') perm = PTE_P;
+	if (argv[3][0] == 'W') perm = PTE_W;
+	if (argv[3][0] == 'U') perm = PTE_U;
+	if (argv[2][0] == '0') 	//clear
+		*pte = *pte & ~perm;
+	else 	//set
+		*pte = *pte | perm;
+	cprintf("%x after  setperm: ", addr);
+	pprint(pte);
+	return 0;
+}
+
+/**
+ * 输出虚拟地址对应的物理内存地址
+ */ 
+int mon_showmem(int argc, char **argv, struct Trapframe *tf) {
+	if (argc == 1) {
+		cprintf("Usage: showmem 0xaddr 0xn\n");
+		return 0;
+	}
+	void** addr = (void**) str2add(argv[1]);
+	uint32_t n = str2add(argv[2]);
+	int i;
+	for (i = 0; i < n; ++i)
+		cprintf("VM at %x is %x\n", addr+i, addr[i]);
+	return 0;
 }

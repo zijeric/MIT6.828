@@ -13,21 +13,23 @@
 
 void i386_init(void)
 {
+	// 外部字符数组变量 edata 和 end，因为我们加载内核后已经启用虚拟地址映射（分页映射功能，并加载entry_pgdir到cr3寄存器）
+	// 其中 edata 表示的是 bss 节起始位置（虚拟地址），而 end 则是表示内核可执行程序结束位置（虚拟地址）
 	extern char edata[], end[];
 
-	// Before doing anything else, complete the ELF loading process.
-	// Clear the uninitialized global data (BSS) section of our program.
-	// This ensures that all static/global variables start out zero.
+	// 在执行其他操作之前，请完成 ELF 加载过程
+	// 清除程序的未初始化的全局数据（BSS）部分
+	// 这样可确保所有静态/全局变量均从零开始.
 	memset(edata, 0, end - edata);
 
-	// Initialize the console.
-	// Can't call cprintf until after we do this!
+	// 初始化控制台
+	// 在调用 cons_init 之前，无法调用 cprintf ！
 	cons_init();
 
-	// Lab 2 memory management initialization functions
+	// 内存管理初始化函数
 	mem_init();
 
-	// Lab 3 user environment initialization functions
+	// 用户环境初始化函数
 	env_init();
 	trap_init();
 
@@ -35,11 +37,11 @@ void i386_init(void)
 	// Don't touch -- used by grading script!
 	ENV_CREATE(TEST, ENV_TYPE_USER);
 #else
-	// Touch all you want.
+	// Touch all you want. 这个宏相当于调用env_create(_binary_obj_user_hello_start, ENV_TYPE_USER)
 	ENV_CREATE(user_hello, ENV_TYPE_USER);
 #endif // TEST*
 
-	// We only have one user environment for now, so just run it.
+	// 目前我们只有一个用户环境，envs[0]已经在env_create的时候初始化过了
 	env_run(&envs[0]);
 }
 

@@ -30,35 +30,35 @@
 // 从 PDX (la)、PTX(la)和 PGOFF(la)构造线性地址 la，
 // 使用 PGADDR(PDX(la)，PTX(la)，PGOFF(la))。
 
-// page number field of address 右移22位
+// (page directory index + page table index) 右移12位
 #define PGNUM(la)	(((uintptr_t) (la)) >> PTXSHIFT)
 
 // page directory index	右移22位，与操作只保留低10位(9~0)
 #define PDX(la)		((((uintptr_t) (la)) >> PDXSHIFT) & 0x3FF)
 
-// page table index		右移22位，与操作只保留低10位(9~0)
+// page table index		右移12位，与操作只保留低10位(9~0)
 #define PTX(la)		((((uintptr_t) (la)) >> PTXSHIFT) & 0x3FF)
 
 // offset in page: page frame index		与操作只保留低12位(11~0)
 #define PGOFF(la)	(((uintptr_t) (la)) & 0xFFF)
 
-// construct linear address from indexes and offset
+// 由索引和偏移构造线性地址
 #define PGADDR(d, t, o)	((void*) ((d) << PDXSHIFT | (t) << PTXSHIFT | (o)))
 
 // Page directory and page table constants.
-#define NPDENTRIES	1024		// page directory entries per page directory
-#define NPTENTRIES	1024		// page table entries per page table
+#define NPDENTRIES	1024		// 每个页目录的 pde 数目为1024
+#define NPTENTRIES	1024		// 每个页表页的 pte 数目为1024
 
-#define PGSIZE		4096		// bytes mapped by a page
-#define PGSHIFT		12		// log2(PGSIZE)
+#define PGSIZE		4096		// 一个物理页映射的字节数，即页大小为4096，4KB
+#define PGSHIFT		12			// log2(PGSIZE)
 
-#define PTSIZE		(PGSIZE*NPTENTRIES) // bytes mapped by a page directory entry
+#define PTSIZE		(PGSIZE*NPTENTRIES) // 一个页表对应实际物理内存的大小，即1024 * 4KB = 4MB
 #define PTSHIFT		22		// log2(PTSIZE)
 
-#define PTXSHIFT	12		// offset of PTX in a linear address
-#define PDXSHIFT	22		// offset of PDX in a linear address
+#define PTXSHIFT	12		// 线性地址中页表页索引的偏移
+#define PDXSHIFT	22		// 线性地址中页目录索引的偏移
 
-// Page table/directory entry flags.
+// 页目录表/页表的权限位，在访问对应页时CPU会自动地判断，如果访问违规，会产生异常
 #define PTE_P		0x001	// Present		存在位
 #define PTE_W		0x002	// Writeable	可写位，同时影响 kernel 和 user
 #define PTE_U		0x004	// User			用户1->(0,1,2,3), 管理员0->(0,1,2)

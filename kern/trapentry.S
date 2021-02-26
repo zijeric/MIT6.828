@@ -1,4 +1,4 @@
-/* See COPYRIGHT for copyright information. */
+# 汇编语言陷阱处理程序入口点
 
 #include <inc/mmu.h>
 #include <inc/memlayout.h>

@@ -1,6 +1,5 @@
-// Called from entry.S to get us going.
-// entry.S already took care of defining envs, pages, uvpd, and uvpt.
-
+// 从 entry.S 调用并继续，entry.S 已经定义了 envs、pages、uvpd和uvpt
+// 调用的用户模式库设置代码entry.S
 #include <inc/lib.h>
 
 extern void umain(int argc, char **argv);

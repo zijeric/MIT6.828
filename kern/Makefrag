@@ -81,6 +81,8 @@ $(OBJDIR)/kern/init.o: $(OBJDIR)/.vars.INIT_CFLAGS
 $(OBJDIR)/kern/kernel: $(KERN_OBJFILES) $(KERN_BINFILES) kern/kernel.ld \
 	  $(OBJDIR)/.vars.KERN_LDFLAGS
 	@echo + ld $@
+	# 链接器的 -b binary 选项使得生成的二进制镜像以原始的、未被翻译二进制文件而非普通的被编译器生成的.o文件的方式链接，
+	# 通过 -b binary 方式链接的二进制文件就链接器而言可以为任意类型，甚至是文本文件或是图片
 	$(V)$(LD) -o $@ $(KERN_LDFLAGS) $(KERN_OBJFILES) $(GCC_LIB) -b binary $(KERN_BINFILES)
 	$(V)$(OBJDUMP) -S $@ > $@.asm
 	$(V)$(NM) -n $@ > $@.sym

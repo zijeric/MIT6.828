@@ -1,5 +1,12 @@
-/* See COPYRIGHT for copyright information. */
-
+/**
+ * x86CPU: Logic Address 段式地址转换 --> Linear Address 页式地址转换(MMU) --> Physical Address
+ * 分页前和kern/entry.S启动分页后的区别：
+ * 	分页前由于系统仍然采用段式地址变换，线性地址就等于物理地址，这时访问内存应该延续以前的做法，采用逻辑地址从KERNBASE开始对内存进行读写
+ * 	（在kern/entry.S中的宏函数RELOC(x) ((x) - KERNBASE)，将0xF0000000开始的地址链接到0x00000000开始的实际物理地址，之后就开启了分页功能）
+ * 
+ * 	注意，不要把虚拟地址(线性地址)写到页目录项和页表项PPN中，因为我们需要通过PPN直接找到对应的页表页/物理页帧首地址
+ * 	写入页目录项和页表项的应该是实际的物理地址！
+ */ 
 #include <inc/x86.h>
 #include <inc/mmu.h>
 #include <inc/error.h>
@@ -15,7 +22,8 @@ size_t npages;					// 物理内存量（以页为单位）
 static size_t npages_basemem;	// 基本内存量（以页为单位）
 
 // 这些变量在 mem_init() 中赋值
-// 内核初始化的页目录
+
+// 内核初始化的页目录，即正式使用的页目录
 pde_t *kern_pgdir;
 // 所有 Page 在内存（物理内存）中的存放是连续的，存放于 pages 处，可以通过数组的形式访问各个 Page，
 // 而 pages 紧接于 kern_pgdir 页目录之上，对应物理和虚拟内存布局也就是在kernel向上的紧接着的高地址部分连续分布着 pages 数组。
@@ -23,6 +31,12 @@ pde_t *kern_pgdir;
 struct PageInfo *pages;
 // 空闲物理页链表
 static struct PageInfo *page_free_list;
+// 链表管理空闲页，简化环境的分配和释放，仅仅需要从该链表上添加或移除
+// pages 始终指向页空间首位置，使用下标向后访问所有可用/不可用内存；
+// page_free_list 始终指向可用页空间的末尾位置，往回指的指针 pp_link 要越过非空物理页，
+// 这样 page_free_list 才能通过 pp_link 往回获取空闲空间
+// 因此，PageInfo 结构体数组空间是连续的，对于每次分配出的PageInfo指针，都可以计算出其与数组头之间的偏移再*0x1000，从而获取对应物理页的首地址；
+// 另一方面，从page_free_list角度看，连续的 PageInfo 结构体数组空间又是由指针回溯的不连续空间，从而可以自由合并和分配PageInfo空间。
 
 /**
  * check_page_alloc 这一行之上进行的操作汇总如下。
@@ -47,7 +61,7 @@ nvram_read(int r)
 
 /**
  * 直接调用硬件查看可以使用的内存大小。
- * (更新全局变量 npages:总内存所需物理页的数目 & npages_basemem:0x000A0000，IO hole之前)
+ * (更新全局变量 npages:总内存所需物理页的数目 & npages_basemem:0x000A0000，基本内存所需物理页数目，BIOS 之前)
  */ 
 static void
 i386_detect_memory(void)
@@ -81,7 +95,7 @@ i386_detect_memory(void)
 
 
 // --------------------------------------------------------------
-// Set up memory mappings above UTOP.
+// 在 UTOP 之上设置内存映射 虚拟地址映射到物理地址
 // --------------------------------------------------------------
 
 static void boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm);
@@ -101,8 +115,10 @@ static void check_page_installed_pgdir(void);
  * 
  * 如果 n==0，则不分配任何内容就返回下一个空闲页的地址。
  * 
- * 如果我存不足，boot_alloc 会崩溃调用panic()。
+ * 如果内存不足，boot_alloc 会崩溃调用panic()。
  * 仅在初始化 page_free_list 链表之前，才能调用此函数。
+ * 这也是为什么 boot_alloc 要检查是否分配了超过4M的原因。boot_alloc 函数只被用来分配2个东西：
+ * pgdir（大小为4096K，我们马上就是填充这个一级页表），pages数组（你算算就知道不会超过4M，qemu只给了128M的物理地址）。
  */ 
 static void *
 boot_alloc(uint32_t n)
@@ -116,12 +132,12 @@ boot_alloc(uint32_t n)
 	// 这里,这两个特点都利用的很好。如果 nextfree 是第一次使用（默认0），就进入if判断语句，如果之前进入过if判断语句了（只初始化一次），再次调用boot_alloc的时候就不需要再进入if语句了。
 	// 如果这是第一次，将初始化 nextfree
 	// end 是 linker 自动生成的(kern/kernel.ld 53行)，指向内核的最后一个字节的下一个字节。
-	// 因此 end 是 linker 没有 分配任何内核代码或全局变量的第一个虚拟地址(bss 段是已加载内核代码的最后一个段)
+	// 因此 end 是 linker 没有 分配任何内核代码或全局变量的第一个虚拟地址/线性地址(bss 段是已加载内核代码的最后一个段)
 	if (!nextfree) {
 		extern char end[];
 		nextfree = ROUNDUP((char *) end, PGSIZE);  // ROUNDUP: end 向上对齐（取整）成 PGSIZE(4096) 的倍数
 	}
-	// 既然char end[]是通过linker自动获得的，并且指向内核bss段的结尾，也就是说接下来的空间都是linker过程没有分配的虚拟地址。
+	// 既然char end[]是通过linker自动获得的，并且指向内核bss段的结尾，也就是说接下来的空间都是linker没有分配的虚拟地址。
 	// 所以需要从end开始，分配n字节的空间，更新nextfree并且保持它对齐。
 
 	// 分配足够大的内存块以容纳 'n' 个字节，然后更新 nextfree
@@ -135,7 +151,7 @@ boot_alloc(uint32_t n)
 	// to a multiple of PGSIZE
 	// 用 char *result 返回 nextfree 所指向的地址
 	result = nextfree;
-	// 根据函数设计要求，当 n=0 则不分配任何内容就直接返回下一个空闲页的地址。
+	// 根据函数设计要求，当 n==0 则不分配任何内容就直接返回下一个空闲页的地址。
 	// 因此 n!=0 时再划分内存
 	if (n != 0) {
 		// 根据参数 n 更新 nextfree 的值，使其指向下一个空闲地址处。
@@ -145,7 +161,8 @@ boot_alloc(uint32_t n)
 		nextfree += ROUNDUP(n, PGSIZE);
 
 		// 如果我们内存不足，boot_alloc 应该会崩溃。
-		// 0xf0400000: 先前在 entry.S 进行了虚拟内存映射，将0xf0000000~0xf0400000映射到物理地址0x00000000~00400000(4MB)
+		// 0xf0400000: 先前在 entry.S 进行了虚拟内存映射，
+		// 将[0xf0000000, 0xf0400000]映射到物理地址[0x00000000, 00400000(4MB)]
 		// 仅在初始化 page_free_list 列表之前，才会调用此函数。
 		// 因此以下判断是作谨慎处理其他内存不足的机器
 		if ((uintptr_t) nextfree >= KERNBASE + PTSIZE) {
@@ -156,7 +173,7 @@ boot_alloc(uint32_t n)
 			result = NULL;
 		}
 	}
-	cprintf("boot_alloc memory at %x, next memory allocate at %x\n", result, nextfree);
+	// cprintf("boot_alloc memory at %x, next memory allocate at %x\n", result, nextfree);
 	return result;
 }
 
@@ -174,12 +191,13 @@ mem_init(void)
 
 	// Find out how much memory the machine has (npages & npages_basemem).
 	// 1.通过汇编指令直接调用硬件查看可以使用的内存大小 (底层 kern/kclock.c)
-	// 其中得到的内存信息是整数 npages，代表现有内存的 page 个数(所需 PageInfo 结构体的数量)
+	// 赋值全局变量 npages(总内存量所需的页表个数) 和 npages_basemem(基础内存量所需页表个数)，用于计算 PageInfo 个数
+	// base memory: [0, 0xA0000), BIOS: [0xA0000, 0x100000), extmem: [0x100000, 4G)
 	i386_detect_memory();
 
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
-	// 2.创建一个正式的页目录(一个页的大小)替换在 kern/entry.S 的 entry_pgdir，并设置权限。
+	// 2.创建一个正式的页目录(一个页的大小)替换 kern/entry.S 的 entry_pgdir，并设置权限。
 	kern_pgdir = (pde_t *) boot_alloc(PGSIZE);
 	memset(kern_pgdir, 0, PGSIZE);
 
@@ -192,47 +210,31 @@ mem_init(void)
 	//（到目前为止，您还不了解下一行的更多用途。）
 
 	// Permissions: kernel R, user R
-	// 将UVPT对应到的虚拟地址映射在系统页目录中的表项设置成它自己的物理地址
+	// 将UVPT对应的虚拟地址映射在系统页目录中的表项，设置成页目录的物理地址
 	// 如果想查找一个任意虚拟地址所在的页的物理地址和其对应的二级页表物理地址的话，
 	// 只要有页目录地址就可以做到
-	// 具体来讲，如果要查询的虚拟地址是addr = PDX|PTX|OFFSET的话，显然只有PDX|PTX决定了addr物理页的地址
-	// 查找addr对应的物理页地址的方法如下：
-	// 构造虚拟地址vaddr = UVPT[31:22]|PDX|PTX|00在虚拟内存空间里查询。
-	// 根据二级页表翻译机制：
-	// 1. 系统首先取出 vaddr 的前10位，即UVPT[31:22]，去页目录里查询，根据
 	kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir) | PTE_U | PTE_P;
-	//    注意UVPT[31:22]等价于PDX(UVPT)，所以得到的二级页表地址A0，还是页目录pgdir本身。
-	// 2. 再取出vaddr的中间10位，即PDX，去二级页表中A0（即页目录），
-	//    查找到的是addr所在二级页表的物理地址A1，注意！不是addr的物理页地址，是二级页表的地址！
-	// 3. 最后取出vaddr的最后12位，即PTX|00，去A1物理页中（即addr所在二级页表）查找，
-	//    得到的就是addr最后所在物理页的物理地址
-	// 
-	// 查询addr对应的二级页表物理地址的方法：
-	// 构造虚拟地址vaddr = UVPT[31:22]|UVPT[31:22]|PDX|00在虚拟内存空间里查询。
-	// 注意，这个地址等价于PDX(UVPT)|PDX(UVPT)|PDX|00。
-	// 1. 根据上面的分析，我们可以知道页式转换的前两步，地址转换系统都会跳回到页目录本身
-	// 2. 最后一步取出vaddr的最后12位，即PDX|00，去pgdir的物理页查询，查到的就是addr对应的二级页表物理地址
 
 	//////////////////////////////////////////////////////////////////////
-	// Allocate an array of npages 'struct PageInfo's and store it in 'pages'.
-	// The kernel uses this array to keep track of physical pages: for
-	// each physical page, there is a corresponding struct PageInfo in this
-	// array.  'npages' is the number of physical pages in memory.  Use memset
-	// to initialize all fields of each struct PageInfo to 0.
 	// 分配 npages 个 PageInfo 结构体的数组并将其存储在 'pages' 中。
 	// 内核使用 pages 数组来跟踪物理页：
-	// pages数组的每一项是一个PageInfo结构，对应一个物理页的信息，定义在inc/memlayout.h中
-	// "npages"是内存需要的物理页数。调用 memset 将每个PageInfo结构体的所有字段初始化为 0。
-	size_t page_mem = npages * sizeof(struct PageInfo);
-	pages = (struct PageInfo *)boot_alloc(page_mem);
+	// pages 数组的每一项是一个 PageInfo 结构，对应一个物理页的信息，定义在inc/memlayout.h中
+	// npages 是内存需要的物理页数。调用 memset 将每个PageInfo结构体的所有字段初始化为 0
+	size_t pages_size = npages * sizeof(struct PageInfo);
+	pages = (struct PageInfo *) boot_alloc(pages_size);
 	// void pointer，任何类型的指针都可以直接赋值给它，无需进行强制类型转换
 	// 指针的类型用于每取多少字节将其视为对应类型的值 (char:1, int:2)
-	memset(pages, 0, page_mem);
+	memset(pages, 0, pages_size);
 	// cprintf("pages in pmap.c: %08x", pages);
 
 	//////////////////////////////////////////////////////////////////////
-	// Make 'envs' point to an array of size 'NENV' of 'struct Env'.
-	// LAB 3: Your code here.
+	// 分配 环境内存管理 所需要的空间
+	// 给 NENV 个 Env 结构体在内存中分配空间，envs 存储该数组的首地址
+	// (struct Env *) envs 是指向所有环境链表的指针，其操作方式跟内存管理的 pages 类似
+	size_t envs_size = NENV * sizeof(struct Env);
+	envs = (struct Env *) boot_alloc(envs_size);
+	memset(pages, 0, envs_size);
+	// cprintf("envs in pmap.c: %08x", envs);
 
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
@@ -248,15 +250,27 @@ mem_init(void)
 	check_page_alloc();
 	check_page();
 	
-	// 现在pages数组保存这所有物理页的信息，page_free_list链表记录这所有空闲的物理页。
-	// 可以用page_alloc()和page_free()进行分配和回收。
+	// 现在pages数组存储了所有物理页的信息，page_free_list 链表记录所有空闲的物理页。
+	// 可以用 page_alloc() 和 page_free() 进行分配和回收。
 
 	//////////////////////////////////////////////////////////////////////
 	// Now we set up virtual memory
 
+	/**
+	 * 主要映射了三个区域：
+	 * 1.第一个是 [UPAGES, UPAGES+PTSIZE)映射到页表存储的物理地址 [pages, pages+PTSIZE)
+	 *   这里的PTSIZE代表页式内存管理所占用的空间(不包括页目录)
+	 * 
+	 * 2.第二个是 [KSTACKTOP-KSTKSIZE, KSTACKTOP) 映射到[bootstack,bootstack+32KB)处。
+	 *   KERNBASE以下的8个物理页大小用作内核栈，栈向下拓展，栈底EBP 栈顶ESP
+	 * 
+	 * 3.第三个则是映射整个内核的虚拟空间[KERNBASE, 2^32-KERNBASE)到 物理地址 [0,256M)。
+	 *   涵盖了所有物理内存
+	 */ 
 	//////////////////////////////////////////////////////////////////////
-	// 将虚拟地址的 UPAGES 映射到物理地址pages数组开始的位置(权限：用户只读)
-	// 默认在映射时分配 PTE_P 权限
+	// 映射页式内存管理所占用的空间：将虚拟地址的 UPAGES 映射到物理地址pages数组开始的位置
+	// pages 将在 地址空间UPAGES 中映射内存(权限：用户只读)，以便于所有页表页和物理页帧能够从这个数组中读取
+	// 权限: 内核 R-，用户 R-
 	boot_map_region(kern_pgdir, UPAGES, PTSIZE, PADDR(pages), PTE_U);
 
 	//////////////////////////////////////////////////////////////////////
@@ -265,11 +279,16 @@ mem_init(void)
 	// Permissions:
 	//    - the new image at UENVS  -- kernel R, user R
 	//    - envs itself -- kernel RW, user NONE
-	// LAB 3: Your code here.
+	// 将 envs 数组的首地址映射到 从 UENV 所指向的线性地址开始 的空间(权限：用户只读)，所以页面权限被标记为PTE_U
+	// 与 pages 数组一样，envs 也将在 地址空间UENVS 中映射用户只读的内存，以便于用户环境能够从这个数组中读取。
+	boot_map_region(kern_pgdir, UENVS, PTSIZE, PADDR(envs), PTE_U);
+	// 注意，pages和envs本身作为内核代码的数组，拥有自己的虚拟地址，且内核可对其进行读写。
+	// boot_map_region函数将两个数组分别映射到了UPAGES和UENVS起 4M空间的虚拟地址，这相当于另外的映射镜像，
+	// 其二级页表项权限被设为用户/内核可读，因此通过UPAGES和UENVS的虚拟地址去访问pages和envs的话，只能读不能写
 
 	//////////////////////////////////////////////////////////////////////
 	// 使用 bootstack 所指的物理内存作为内核堆栈。内核堆栈从虚拟地址 KSTACKTOP 向下扩展
-	// 我们认为从[KSTACKTOP-PTSIZE, KSTACKTOP]整个范围都是内核堆栈，但是把它分成两部分:
+	// 设置从[KSTACKTOP-PTSIZE, KSTACKTOP]整个范围都是内核堆栈，但是把它分成两部分:
 	// [KSTACKTOP-KSTKSIZE, KSTACKTOP) ---- 由物理内存支持，可以被映射
 	// [KSTACKTOP-PTSIZE, KSTACKTOP-KSTKSIZE) ---- 没有物理内存支持，不可映射
 	// 因此，如果内核栈溢出将会触发 panic 错误，而不是覆盖内存。类似规定被称为“守护页”
@@ -279,11 +298,11 @@ mem_init(void)
 	boot_map_region(kern_pgdir, backed_stack, KSTKSIZE, PADDR(bootstack), PTE_W);
 
 	//////////////////////////////////////////////////////////////////////
-	// 在 KERNBASE 映射所有物理内存。
-	// 即 va 范围[KERNBASE, 2^32)应该映射到 PA 范围[0, 2^32-KERNBASE]
-	// 我们可能没有 2^32-KERNBASE 字节的物理内存，但我们还是设置了映射。
+	// 在 KERNBASE及以上地址 映射所有物理内存。
+	// 即 va 范围[KERNBASE, 2^32)应该映射到 PA 范围[0, 2^32-KERNBASE)，更准确是2^32-1-KERNBASE
+	// 虽然我们可能没有 2^32-KERNBASE 字节的物理内存，但我们依然设置了映射。
 	// 权限: 内核 RW，用户 NONE
-	boot_map_region(kern_pgdir, KERNBASE, 0xffffffff-KERNBASE, 0, PTE_W);
+	boot_map_region(kern_pgdir, KERNBASE, 0xffffffff-KERNBASE+1, 0, PTE_W);
 
 	// Check that the initial page directory has been set up correctly.
 	check_kern_pgdir();
@@ -295,6 +314,10 @@ mem_init(void)
 	//
 	// If the machine reboots at this point, you've probably set up your
 	// kern_pgdir wrong.
+	// 从 entry_pgdir 页目录切换到我们新创建的完整 kern_pgdir 页表(页目录)。
+	// eip 指令寄存器现在位于 [KERNBASE, KERNBASE+4MB] 内（在执行内核代码），因为entry_pgdir和kern_pgdir在此区间以相同的方式映射，不应该产生冲突。
+	// 如果机器此时重新启动，那么可能 kern_pgdir 设置错了。
+	// 这样 MMU 分页硬件在进行页式地址转换时会自动地从 CR3 中取得页目录地址，从而找到当前的页目录。
 	lcr3(PADDR(kern_pgdir));
 
 	check_page_free_list(0);
@@ -317,8 +340,9 @@ mem_init(void)
 // --------------------------------------------------------------
 
 /**
- * 初始化页结构和空闲内存列表。完成此操作后，请勿再使用boot_alloc。
- * 仅使用下面的页分配器函数 page_init 来分配和释放由 page_free_list 进行存储的物理内存。
+ * 初始化pages中的每一项，建立 page_free_list 链表。
+ * 注意，完成此操作后，无需再使用boot_alloc，page_free_list 链表可以完美替代。
+ * 仅使用之后的页分配器函数 page_alloc、page_free 来分配和释放由 page_free_list 进行存储的物理内存。
  */ 
 void
 page_init(void)
@@ -345,18 +369,18 @@ page_init(void)
 	// kern_pgdir页目录表 和 pages物理页状态数组都由 boot_alloc 分配，因此再次调用 boot_alloc(0)可返回在其之后的物理地址
 	size_t kernel_end_page = PADDR(boot_alloc(0)) / PGSIZE;
 
-	// 页状态数组索引0[0, PGSIZE) 对应于第一个页，占用内存4KB
+	// 物理页状态数组索引0[0, PGSIZE) 对应于第一个页，占用内存4KB
 	// 这部分内存是被占用不能分配的，用来保存实模式的中断向量表 IDT
 	// 设置该页为*已引用*且无法通过 pp_link 链接
 	pages[0].pp_ref = 1;
 	pages[0].pp_link = NULL;
-	
+
 	for (i = 1; i < npages; i++) {
 		// [IOPHYSMEM, boot freemem) 包含以下：
-		//   1.[IO hole, EXTPHYSMEM]: [0x000A0000, 0x00100000]
+		//   1.BIOS [IO hole, EXTPHYSMEM]: [0x000A0000, 0x00100000]
 		//   2.kernel code: [0x00100000, end], 大约25个PGSIZE
-		//   3.kern_pgdir页目录表
-		//   4.pages物理页状态数组
+		//   3.kern_pgdir 内核页目录表
+		//   4.pages 物理页状态数组
 		//  3和4取决于计算机的内存大小，计算机内存越大，需要管理的物理页越多
 		if(i >= io_hole_start_page && i < kernel_end_page) {
 			pages[i].pp_ref = 1;
@@ -374,30 +398,35 @@ page_init(void)
 }
 
 /**
- * 分配一个物理页。
- * If(alloc_flags & ALLOC_ZERO)==true，则通过 page2kva 和 memset用 \0 填充整个返回的物理页。
- * 不增加物理页的引用计数，如果确实需要增加引用计数，调用者必须显式地调用page_insert
+ * page_alloc()函数将从 pages 数组空间中由后往前分配，通过使用 page_free_list 指针和 pp_link 成员返回链表第一个 PageInfo 结构地址
+ * 当传入参数标识非 0 时，分配的空间将被清零。虽然一开始 pages 数组空间被清零，但此刻分配的空间可能是之前被使用后回收的，不一定为空。
+ * 
+ * 具体实现：
+ * If(alloc_flags & ALLOC_ZERO)==true，则通过 page2kva 和 memset用0填充整个返回的物理页。
+ * 不增加物理页的引用计数，如果确实需要增加引用计数，调用者必须显式地调用 page_insert
  * 确保将分配物理页的 pp_link 字段设置为 NULL，这样 page_free 检查就可以双重保证。
  * (pp->pp_ref == 0 和 pp->pp_link == NULL)
- * 
  * 如果空闲内存不足，返回 NULL。
  * 
- * 提示：
+ * 需要注意的是，不需要增加PageInfo的pp_ref字段。
+ * 为什么page_alloc中pp_ref不需要++，在 pdgir_walk 与 page_insert中却都要++？
+ * 每一次page被映射到一个虚拟地址va的时候pp_ref需要increment，而如果取消映射就得decrement，
+ * page_alloc只是分配了物理页，并没有与虚拟地址建立映射，故不需要改pp_ref值。
  */ 
 struct PageInfo *
 page_alloc(int alloc_flags)
 {
-	// 获取空闲页链表的第一个页结点，ret就是准备取出的页结点，即将分配的物理页
+	// 获取空闲页链表的第一个页结点ret，即准备取出的页结点
 	struct PageInfo *ret = page_free_list;
 
 	// 空闲内存不足，返回 NULL
 	if(ret == NULL) {
-		// cprintf("page_alloc: out of free memory!\n");
 		return NULL;
 	}
 	// 还存在空闲的内存，更新空闲页链表
 	else {
-		// 将`page_init()`组织的空闲页链表`page_free_list`的第一个页结点取出，将头指针指向下一个页结点
+		// 与普通链表取出结点的步骤相同
+		// 将 page_init() 组织的空闲页链表 page_free_list 的第一个页结点取出，将头指针指向下一个页结点
 		// 空闲页链表page_free_list指向*准备取出的页结点*的下一个页结点
 		page_free_list = ret->pp_link;
 		// 将*准备取出的页结点*的pp_link设置为NULL来进行双重错误检查
@@ -407,14 +436,14 @@ page_alloc(int alloc_flags)
 			// 一定记得memset参数使用的是虚拟地址
 			// 获取*准备取出的页结点*对应的虚拟地址，
 			// 调用 memset 函数将*准备取出的页结点*对应物理页页表的虚拟地址 PGSIZE 字节清零，确保所有的 PTE_P 都是0
-			memset(page2kva(ret), '\0', PGSIZE);
+			memset(page2kva(ret), 0, PGSIZE);
 		}
 		return ret;
 	}
 }
 
 /**
- * 从空闲链表头添加函数参数PageInfo结点，相当于栈，后进先出
+ * 从空闲链表头添加函数参数PageInfo结点，page_free_list 相当于栈，后进先出
  * 将一个物理页返回到空闲链表。(只有当 pp->pp_ref 等于0时才应该调用page_free)
  */ 
 void
@@ -456,36 +485,41 @@ page_decref(struct PageInfo* pp)
  * 么在无法提前知道这些需求的话，最明智的办法就是不在页目录这一环节限制
  * 太多，让最终的访问控制在二级页表这一环节上再去具体设置。
  */
+/**
+ * 从在CPU上执行的代码开始，一旦进入保护模式，就无法直接使用线性或物理地址。
+ * 所有内存引用都被解释为虚拟地址并由 MMU 分页硬件进行转换，这意味着C中的所有指针存储的都是虚拟地址。
+ * 因此我认为页目录表表项地址也好、二级页表表项地址也好，在表项内存的都是物理基地址(的前20位，后12位做标志位)，
+ * 要使用内存，必须建立虚拟地址映射。无论是C代码还是汇编代码，要访问内存，都是通过虚拟地址。
+ * C代码中，所有指针的值都必须为虚拟地址，代码才能正确执行，否则*访问到的是错误地址。
+ */ 
 
 /** 
- * 根据虚拟地址取出Page Table Entry
+ * pgdir_walk()函数根据线性地址执行页式地址转换机制，返回页表页 pte的虚拟地址
  * pgdir_walk 参数：
  *  - pgdir: 页目录虚拟地址
  *  - va: 虚拟地址
- *  - create: 是否需要分配新物理页，如果等于1，则虚拟地址还没有对应的物理页
+ *  - create: 是否需要分配新物理页，如果等于1，则新建已清零的页表页(非物理页帧)
  * 返回值：页表项的地址
- * 作用：给定参数 pgdir(一个指向页目录的指针)，pgdir_walk 返回线性地址 va 的页表项(PTE)的地址。
+ * 注意，pgdir_walk()只负责创建二级页表，然后返回指向二级页表项的指针，不对二级页表做处理，也不做其对物理页映射
  * 
- * 这个过程需要遍历二级页表结构。
- * 根据参数create的值，如果等于1，则虚拟地址还没有对应的物理页，为它新分配物理页。
+ * 注意，页目录项和页表页项中的PPN是物理地址，而指向页目录和页表的指针需要使用逻辑地址。
+ * 无论二级页表存在或是新创建，最后都是返回va在二级页表中对应表项的地址，转换成虚拟地址
  */
 pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
 	// 页目录表全局共享且唯一，通过 pgdir 可以索引到整个页目录表
-	// 获取虚拟地址 va 的页目录项的索引 PDX(va)，通过 pgdir[PDX(va)] 索引页目录项
+	// 获取虚拟地址 va 对应的页目录项的索引 PDX(va)，通过 pgdir[PDX(va)] 索引页目录项
 	// 并用(pde_t*)指针 pde 指向页目录项的虚拟地址
 	pde_t *pde = &pgdir[PDX(va)];
 
-	// 判断页目录中 va 对应二级页表是否存在，应该判断页目录的对应PDX(va)项最后一位状态位present是否为0，
-	// 我一开始写成了if(*pde != 0)了，这样显然不对
-
+	// 判断页目录中 va 对应页表页是否存在，页目录的对应PDX(va)项的present位是否为0，
 	// 与物理页存在位 PTE_P(0x001) 进行与操作，0:该物理页对应的页表还没有分配，1:已分配
 	// 如果该页目录项对应的物理页页表还没有分配
-	if (!(*pde & PTE_P)) {
+	if (pde==NULL || !(*pde & PTE_P)) {
 		// 参数create允许分配新物理页
 		if (create) {
-			// 调用 page_alloc(ALLOC_ZERO) 从空闲页链表中取出一个页结点，并将其对应的物理页清空(memset)，不增加页引用
+			// 调用 page_alloc(ALLOC_ZERO) 从空闲页链表中取出一个页结点，并将其对应的页表页清空(memset)，不增加页引用
 			struct PageInfo *pp = page_alloc(ALLOC_ZERO);
 			// 分配物理页失败（无空闲内存），返回NULL
 			if (pp == NULL) {
@@ -505,54 +539,53 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
 			return NULL;
 		}
 	}
-	// 1.如果该页目录的存在位为1，说明该地址已分配，则返回已分配过的对应页表的地址
-	// 2.返回新分配物理页对应页表的虚拟地址
+	// 1.如果该页目录的存在位为1，说明该地址已分配，则返回已分配过的对应页表页的虚拟地址
+	// 2.返回新分配页表页的虚拟地址
 
 	// 获取页目录项中 PPN 索引对应的页表 pgtable 的虚拟地址
 	// 调用 PTE_ADDR(pa) 获取页表(页目录项)中的PPN索引，调用宏函数 KADDR(pa) 转换为页表的虚拟地址
-	pte_t *pgtable = (pte_t*)KADDR(PTE_ADDR(*pde));
+	pte_t *pgtable = (pte_t*) KADDR(PTE_ADDR(*pde));
 
 	// 返回给定虚拟地址 va 对应的页表项的虚拟地址，PPN(20)+Flags(12)
 	return &pgtable[PTX(va)];
-	// 非物理页帧(物理地址)，pa = PPN(20) + offset: va低12位(11~0)
 }
 
 /**
- * 映射一段空间，将虚拟地址(线性地址)va开始的size大小的区域映射到物理页pa开始的同样大小区域
+ * 将线性地址[va，va+size]映射到位于 pgdir 的页表中的物理地址[pa，pa+size]
  * boot_map_region 参数：
  * pgdir:页目录指针, va:需要映射的虚拟地址(线性地址), size:内存大小
  * pa:需要被映射到的物理地址, perm:需要的权限
  * 
- * 将虚拟地址空间的[va，va+size]映射到位于 pgdir 的页表中的物理[pa，pa+size]。
- * size是 PGSIZE 的倍数，va 和 pa 都是页对齐的。
- * 对页表项的物理地址授予权限，给定的 perm 和物理页存在位 PTE_P。
- * 此函数仅用于设置地址 UTOP 之上的 静态 映射(全局)。因此，它*不应该*更改映射物理页上的 pp_ref 字段。
+ * 注意，size必须设置为页对齐，va 和 pa 默认传入已是页对齐的。
+ * 对页表项的物理地址授予权限 perm | PTE_P
+ * 此函数仅用于设置地址 UTOP 之上的 静态 映射(全局)。因此，它*不应该*更改映射页表页上的 pp_ref 字段
  * 做法：
- * 这个函数主要依赖于函数pgdir_walk()，并且建立页表保存的映射。
+ * 应用页式地址转换机制 pgdir_walk()，并且设置页表项 pte，保存二级页表映射
  * 遍历区间[va, va+size)，将每一个虚拟地址通过页表映射到物理地址空间[pa, pa+size)上，
- * 这样物理页的地址可以通过二级页表的PPN找到。
- * 这样就建立了线性地址到二级页表的映射。
+ * 这样物理页帧的地址可以通过二级页表的PPN找到。
+ * 从而建立*一段*线性地址到二级页表的映射。
  */ 
 static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
-	// 计算 size 对应了多少物理页，先将 size 页对齐，再除以 PGSIZE
+	// 计算 size 对应了多少页表页，先将 size 页对齐，再除以 PGSIZE
 	size = ROUNDUP(size, PGSIZE);
+	// pgs 必然是可以满足 size 内存的整数
 	size_t pgs = size / PGSIZE;
 
 	// 遍历区间[va, va+size)，将每一个虚拟地址通过页表映射到物理地址空间[pa, pa+size)上
 	for (size_t i = 0; i < pgs; ++i) {
 
-		// 获取虚拟地址(线性地址)va对应的页表项PTE的地址，
-		// 无则分配空的物理页，va 在[0,pgs]循环范围内 pte 必然不为空
+		// 获取虚拟地址(线性地址)va 对应的页表项 PTE 的地址，
+		// 无则分配已清零的页表页，va 在[0, pgs]循环范围内 pte 必然不为空
 		pte_t *pte = pgdir_walk(pgdir, (void*)va, ALLOC_ZERO);
 		// pte为空，说明内存越界了，循环区间有问题
 		if (!pte) {
 			panic("boot_map_region(): out of memory\n");
 		}
 
-		// 设置给定虚拟地址 va 对应的页表项PTE，并授予的权限，
-		// pa 是页对齐的(4096=2^12)，所以低12位为空，与PTE_P和perm或运算设置权限
+		// 设置给定虚拟地址 va 对应的页表项 PTE，并授予的权限，
+		// pa 是页对齐的(4096=2^12)，所以低12位为空，与 PTE_P 和 perm 或运算设置权限
 		*pte = pa | PTE_P | perm;
 
 		// 更新 pa 和 va，进入下一轮循环
@@ -562,8 +595,10 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 }
 
 /**
- * 将一个虚拟地址 va 映射到它实际对应的物理页 pp 上去。
- * 页表项的权限(低12位)应设置为 perm|PTE_P
+ * 这是实现页式内存管理最重要的一个函数，建立页表页的映射及权限
+ * 将PageInfo结构 pp 所对应的物理页分配给线性地址 va，同时，将对应页表项pte 的flags设置成 perm|PTE_P
+ * page_insert 参数：
+ * pgdir:页目录指针, pp:对应物理页帧的PageInfo结构的虚拟地址, va:需要映射的虚拟地址(线性地址), perm:需要的权限
  * 
  * 分类讨论:
  * 1. 这个虚拟地址所对应的二级页表上没有挂载页表项PPN(物理页)，那么这时直接修改相应的二级页表表项即可
@@ -574,22 +609,24 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 int
 page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 {
-	// 获取虚拟地址va对应的页表项 PTE 地址，如果 va 对应的页表还没有分配，则分配一个空的物理页作为页表
+	// 通过页式地址转换机制pgdir_walk，获取虚拟地址va对应的页表项 PTE 地址，
+	// 如果 va 对应的页表还没有分配，则分配一个空的物理页作为页表
 	pte_t *pte = pgdir_walk(pgdir, va, ALLOC_ZERO);
 	// 分配页表项失败
 	if (!pte) {
 		return -E_NO_MEM;
 	}
 
-	// 提前增加pp_ref引用次数，避免 pp 在插入之前被释放的极端情况。
-	pp->pp_ref++;	
-	// 当前虚拟地址va已经被映射过，需要先释放（无论是否和当前分配的物理页相同，最终都要修改perm权限设置）
+	// 提前增加pp_ref引用次数，避免 pp 在插入page_free_list之前被释放的极端情况。
+	// 极端情况：一个PageInfo对应的物理页帧被插入了page_free_list中，但它却正在被使用。
+	pp->pp_ref++;
+	// 当前虚拟地址va已经被映射过，需要先释放（无论是否和当前分配的物理页帧相同，最终都要修改perm权限设置，所以统一插入新的页表项）
 	if (*pte & PTE_P) {
 		// 调用 page_remove 中删除页表中对应的页表项(取消映射)
 		page_remove(pgdir, va);
 	}
 
-	// 将PageInfo结构转换为对应物理页的PPN，设置权限后赋值到页表项，完成映射
+	// pa 获取PageInfo结构对应物理页帧的PPN，设置权限后赋值到页表项，完成映射
 	physaddr_t pa = page2pa(pp);
 	// 插入物理页(页表项)到页表，为对应页表项赋值
 	*pte = pa | perm | PTE_P;
@@ -598,17 +635,15 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 }
 
 /** 
+ * 在页式地址转换机制中查找线性地址va所对应的物理页，如果找到，返回该物理页对应的 PageInfo 结构地址，并将对应的页表项的地址放到 pte_store
+ * 如果还没有物理页被映射到va，那就返回NULL（包括页目录表项的PTE_P=0 / 页表表项的PTE_P=0两种情况）
  * page_lookup 参数
  * pgdir: 页目录地址, va: 虚拟地址,
- * pte_store: (pte_t*)指针的地址，方便修改指针与swap同理
+ * pte_store: (pte_t*)指针的地址，方便修改指针与swap同理，接收二级页表项地址
+ * 应用于 page_remove，将pte设置为0，令二级页表该项无法索引到物理页帧(物理地址)
  * 
- * 通过虚拟地址 va 取出对应的所在物理页的地址
- * 这个函数用来检测虚拟地址 va 对应的物理页是否存在。
- * 1.不存在返回NULL，
- * 2.存在返回虚拟地址va对应物理页的描述结构体PageInfo的指针 (PageInfo 结构体仅用来描述物理页)
- * 
- * 大体思路和pgdir_walk()差不多，所以可以用函数调用：利用pgdir_walk()获取页表项虚拟地址之后，
- * 用 pte_store 指向页表项的虚拟地址，然后返回所找到的物理页帧（page frame）。
+ * 利用了页式地址转换机制，所以可以调用函数 pgdir_walk() 获取页表项虚拟地址(pte*)，
+ * 用 pte_store 指向页表项的虚拟地址，然后返回所找到的物理页帧PageInfo结构的虚拟地址
  */ 
 struct PageInfo *
 page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
@@ -618,15 +653,15 @@ page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 	// 对应的页表项不存在/无效，返回 NULL
 	if (!pte || !(*pte & PTE_P)) return NULL;
 
-	// 	将 pte_store 指向页表的虚拟地址 pte
+	// 	将 pte_store 指向页表项的虚拟地址 pte
 	if (pte_store) {
 		*pte_store = pte;
 	}
-	// 由 pa 接收给定虚拟地址 va 对应页表项的PPN索引(20)，根据此索引可以找到对应的物理页帧(物理地址)
+	// 由 pa 接收给定虚拟地址 va 对应页表项的PPN索引(20)
 	physaddr_t pa = PTE_ADDR(*pte);
-	// 获取PPN索引 pa 对应的物理页结构 PageInfo
+	// 获取PPN索引 pa 对应的物理页帧结构 PageInfo
 	struct PageInfo *pp = pa2page(pa);
-	// 返回所找到的物理页结构
+	// 返回物理页帧结构地址(虚拟地址)
 	return pp;
 }
 
@@ -638,10 +673,10 @@ page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
  * 如果没有对应的虚拟地址就什么也不做。
  * 
  * 具体做法如下：
- * 1.减少物理地址所映射的物理页数量（用page_lookup找到va虚拟地址对应的物理地址之后再进行操作）
- * 2.物理页应该被释放（用page_decref实现）
+ * 1.找到va虚拟地址对应的物理页帧PageInfo结构的虚拟地址（调用page_lookup）
+ * 2.减少物理页帧PageInfo结构的引用数 / 物理页帧被释放（调用page_decref）
  * 3.虚拟地址 va 对应的页表项 PTE 应该被设置为0（如果存在 PTE）
- * 4.TLB 翻译缓存 必须变为不可用状态如果移除了页表入口（用tlb_invalidate实现）
+ * 4.失效化 TLB 缓存，重新加载 TLB 的页目录，否则数据不对应（调用tlb_invalidate）
  */ 
 void
 page_remove(pde_t *pgdir, void *va)
@@ -654,9 +689,9 @@ page_remove(pde_t *pgdir, void *va)
 	if (pp && (*pte & PTE_P)) {
 		// 将pp->pp_ref减1，如果pp->pp_ref为0，需要释放该PageInfo结构（将其放入page_free_list链表中）
 		page_decref(pp);
-		// 将页表项 PTE 对应的 PPN 设为0，令二级页表该项无法索引到物理页帧(物理地址)
+		// 将页表项 PTE 对应的 PPN 设为0，令二级页表该项无法索引到物理页帧
 		*pte = 0;
-		// 失效化TLB缓存
+		// 失效化 TLB 缓存，重新加载 TLB 的页目录，否则数据不对应
 		tlb_invalidate(pgdir, va);
 	}
 }
@@ -736,6 +771,7 @@ check_page_free_list(bool only_low_memory)
 	if (!page_free_list)
 		panic("'page_free_list' is a null pointer!");
 
+	// 这段代码的作用就是调整page_free_list链表的顺序，将代表低地址的PageInfo结构放到链表的表头处，这样的话，每次分配物理地址时都是从低地址开始。
 	if (only_low_memory) {
 		// Move pages with lower addresses first in the free
 		// list, since entry_pgdir does not map all pages.
@@ -748,6 +784,8 @@ check_page_free_list(bool only_low_memory)
 			*tp[pagetype] = pp;
 			tp[pagetype] = &pp->pp_link;
 		}
+		// 执行for循环后，pp1指向（0~4M）中地址最大的那个页的PageInfo结构。
+		// pp2指向所有页中地址最大的那个PageInfo结构
 		*tp[1] = 0;
 		*tp[0] = pp2;
 		page_free_list = pp1;
