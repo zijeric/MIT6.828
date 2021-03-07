@@ -2,7 +2,7 @@
  * x86CPU: Logic Address 段式地址转换 --> Linear Address 页式地址转换(MMU) --> Physical Address
  * 分页前和kern/entry.S启动分页后的区别：
  * 	分页前由于系统仍然采用段式地址变换，线性地址就等于物理地址，这时访问内存应该延续以前的做法，采用逻辑地址从KERNBASE开始对内存进行读写
- * 	（在kern/entry.S中的宏函数RELOC(x) ((x) - KERNBASE)，将0xF0000000开始的地址链接到0x00000000开始的实际物理地址，之后就开启了分页功能）
+ * 	（在kern/entry.S中的宏函数RELOC(x) ((x) - KERNBASE)，将0xF0000000开始的地址链接到0x00000000开始的实际物理地址，之后就开启了分页功能，将KERNBASE区域映射）
  * 
  * 	注意，不要把虚拟地址(线性地址)写到页目录项和页表项PPN中，因为我们需要通过PPN直接找到对应的页表页/物理页帧首地址
  * 	写入页目录项和页表项的应该是实际的物理地址！
@@ -146,7 +146,6 @@ boot_alloc(uint32_t n)
 	// nextfree.  Make sure nextfree is kept aligned
 	// to a multiple of PGSIZE.
 	//
-	// LAB 2: Your code here.
 	// ROUNDUP to make sure nextfree is kept aligned
 	// to a multiple of PGSIZE
 	// 用 char *result 返回 nextfree 所指向的地址
@@ -197,7 +196,7 @@ mem_init(void)
 
 	//////////////////////////////////////////////////////////////////////
 	// create initial page directory.
-	// 2.创建一个正式的页目录(一个页的大小)替换 kern/entry.S 的 entry_pgdir，并设置权限。
+	// 2.为了替换 kern/entry.S 中临时的 entry_pgdir创建一个正式的页目录(一个页的大小)，并设置权限。
 	kern_pgdir = (pde_t *) boot_alloc(PGSIZE);
 	memset(kern_pgdir, 0, PGSIZE);
 
@@ -249,37 +248,37 @@ mem_init(void)
 	check_page_free_list(1);
 	check_page_alloc();
 	check_page();
-	
+
 	// 现在pages数组存储了所有物理页的信息，page_free_list 链表记录所有空闲的物理页。
 	// 可以用 page_alloc() 和 page_free() 进行分配和回收。
 
 	//////////////////////////////////////////////////////////////////////
-	// Now we set up virtual memory
+	// 现在我们就成功启动并配置好了虚拟内存
 
 	/**
-	 * 主要映射了三个区域：
+	 * 主要映射了四个区域：
 	 * 1.第一个是 [UPAGES, UPAGES+PTSIZE)映射到页表存储的物理地址 [pages, pages+PTSIZE)
 	 *   这里的PTSIZE代表页式内存管理所占用的空间(不包括页目录)
 	 * 
-	 * 2.第二个是 [KSTACKTOP-KSTKSIZE, KSTACKTOP) 映射到[bootstack,bootstack+32KB)处。
+	 * 2.第一个是 [UENVS, UENVS+PTSIZE)映射到envs数组存储的物理地址 [envs, envs+PTSIZE)
+	 *   这里的PTSIZE代表页式内存管理所占用的空间(不包括页目录)
+	 * 
+	 * 3.第三个是 [KSTACKTOP-KSTKSIZE, KSTACKTOP) 映射到[bootstack,bootstack+32KB)
 	 *   KERNBASE以下的8个物理页大小用作内核栈，栈向下拓展，栈底EBP 栈顶ESP
 	 * 
-	 * 3.第三个则是映射整个内核的虚拟空间[KERNBASE, 2^32-KERNBASE)到 物理地址 [0,256M)。
+	 * 4.第四个则是映射整个内核的虚拟空间[KERNBASE, 2^32-KERNBASE)到 物理地址 [0,256M)。
 	 *   涵盖了所有物理内存
 	 */ 
 	//////////////////////////////////////////////////////////////////////
+	// [UPAGES, sizeof(pages)] => [pages, sizeof(pages)]
 	// 映射页式内存管理所占用的空间：将虚拟地址的 UPAGES 映射到物理地址pages数组开始的位置
 	// pages 将在 地址空间UPAGES 中映射内存(权限：用户只读)，以便于所有页表页和物理页帧能够从这个数组中读取
 	// 权限: 内核 R-，用户 R-
 	boot_map_region(kern_pgdir, UPAGES, PTSIZE, PADDR(pages), PTE_U);
 
 	//////////////////////////////////////////////////////////////////////
-	// Map the 'envs' array read-only by the user at linear address UENVS
-	// (ie. perm = PTE_U | PTE_P).
-	// Permissions:
-	//    - the new image at UENVS  -- kernel R, user R
-	//    - envs itself -- kernel RW, user NONE
-	// 将 envs 数组的首地址映射到 从 UENV 所指向的线性地址开始 的空间(权限：用户只读)，所以页面权限被标记为PTE_U
+	// [UENVS, sizeof(envs)] => [envs, sizeof(envs)]
+	// 将 UENV 所指向的虚拟地址开始 的空间(权限：用户只读)映射到 envs 数组的首地址，所以物理页权限被标记为PTE_U
 	// 与 pages 数组一样，envs 也将在 地址空间UENVS 中映射用户只读的内存，以便于用户环境能够从这个数组中读取。
 	boot_map_region(kern_pgdir, UENVS, PTSIZE, PADDR(envs), PTE_U);
 	// 注意，pages和envs本身作为内核代码的数组，拥有自己的虚拟地址，且内核可对其进行读写。
@@ -287,43 +286,38 @@ mem_init(void)
 	// 其二级页表项权限被设为用户/内核可读，因此通过UPAGES和UENVS的虚拟地址去访问pages和envs的话，只能读不能写
 
 	//////////////////////////////////////////////////////////////////////
+	// [KSTACKTOP, KSTKSIZE) => [bootstack, KSTKSIZE), KSTKSIZE=8*PGSIZE
 	// 使用 bootstack 所指的物理内存作为内核堆栈。内核堆栈从虚拟地址 KSTACKTOP 向下扩展
 	// 设置从[KSTACKTOP-PTSIZE, KSTACKTOP]整个范围都是内核堆栈，但是把它分成两部分:
 	// [KSTACKTOP-KSTKSIZE, KSTACKTOP) ---- 由物理内存支持，可以被映射
 	// [KSTACKTOP-PTSIZE, KSTACKTOP-KSTKSIZE) ---- 没有物理内存支持，不可映射
 	// 因此，如果内核栈溢出将会触发 panic 错误，而不是覆盖内存。类似规定被称为“守护页”
 	// 权限: 内核 RW，用户 NONE
-	uintptr_t backed_stack = KSTACKTOP - KSTKSIZE;
+	uintptr_t supported_stack = KSTACKTOP - KSTKSIZE;
 	// 仅映射[KSTACKTOP-KSTKSIZE, KSTACKTOP)，即基址:KSTACKTOP-KSTKSIZE, 拓展偏移:KSTKSIZE
-	boot_map_region(kern_pgdir, backed_stack, KSTKSIZE, PADDR(bootstack), PTE_W);
+	boot_map_region(kern_pgdir, supported_stack, KSTKSIZE, PADDR(bootstack), PTE_W);
 
 	//////////////////////////////////////////////////////////////////////
+	// [KERNBASE, 0x10000000] => [0, 0x10000000) 256MB
 	// 在 KERNBASE及以上地址 映射所有物理内存。
 	// 即 va 范围[KERNBASE, 2^32)应该映射到 PA 范围[0, 2^32-KERNBASE)，更准确是2^32-1-KERNBASE
-	// 虽然我们可能没有 2^32-KERNBASE 字节的物理内存，但我们依然设置了映射。
+	// 事实上物理内存不一定有(2^32 - KERNBASE)字节那么大，但映射是没关系，正常情况无法寻址到最高地址
 	// 权限: 内核 RW，用户 NONE
-	boot_map_region(kern_pgdir, KERNBASE, 0xffffffff-KERNBASE+1, 0, PTE_W);
+	size_t size = 0xffffffff-KERNBASE+1;
+	boot_map_region(kern_pgdir, KERNBASE, ROUNDUP(size, PGSIZE), 0, PTE_W);
 
-	// Check that the initial page directory has been set up correctly.
+	// 检查页目录kern_pgdir是否已正确设置
 	check_kern_pgdir();
 
-	// Switch from the minimal entry page directory to the full kern_pgdir
-	// page table we just created.	Our instruction pointer should be
-	// somewhere between KERNBASE and KERNBASE+4MB right now, which is
-	// mapped the same way by both page tables.
-	//
-	// If the machine reboots at this point, you've probably set up your
-	// kern_pgdir wrong.
-	// 从 entry_pgdir 页目录切换到我们新创建的完整 kern_pgdir 页表(页目录)。
-	// eip 指令寄存器现在位于 [KERNBASE, KERNBASE+4MB] 内（在执行内核代码），因为entry_pgdir和kern_pgdir在此区间以相同的方式映射，不应该产生冲突。
-	// 如果机器此时重新启动，那么可能 kern_pgdir 设置错了。
-	// 这样 MMU 分页硬件在进行页式地址转换时会自动地从 CR3 中取得页目录地址，从而找到当前的页目录。
+	// 将 cr3 寄存器存储的 entry_pgdir 临时页目录切换到我们新创建的完整 kern_pgdir 页目录
+	// eip 指令指针现在位于[KERNBASE, KERNBASE+4MB]内（在执行内核代码），为了不使页目录切换产生冲突
+	// kern_pgdir在KERNBASE以上区间的映射包含了entry_pgdir，映射范围更大(4MB->256MB)
+	// 这样 MMU 分页硬件在进行页式地址转换时会自动地从 CR3 中取得页目录地址，从而找到当前的页目录
 	lcr3(PADDR(kern_pgdir));
 
 	check_page_free_list(0);
 
-	// entry.S set the really important flags in cr0 (including enabling
-	// paging).  Here we configure the rest of the flags that we care about.
+	// entry.S 在 cr0 中设置非常重要的标志(包括启用分页)，在这里，我们配置我们关心的其余标志
 	cr0 = rcr0();
 	cr0 |= CR0_PE|CR0_PG|CR0_AM|CR0_WP|CR0_NE|CR0_MP;
 	cr0 &= ~(CR0_TS|CR0_EM);
@@ -431,7 +425,7 @@ page_alloc(int alloc_flags)
 		page_free_list = ret->pp_link;
 		// 将*准备取出的页结点*的pp_link设置为NULL来进行双重错误检查
 		ret->pp_link = NULL;
-		// alloc_flags 和 ALLOC_ZERO 进行与运算，1:需要将返回的页清零
+		// alloc_flags 和 ALLOC_ZERO 进行与运算，非0:需要将返回的页清零
 		if(alloc_flags & ALLOC_ZERO) {
 			// 一定记得memset参数使用的是虚拟地址
 			// 获取*准备取出的页结点*对应的虚拟地址，
@@ -508,7 +502,7 @@ page_decref(struct PageInfo* pp)
 pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
-	// 页目录表全局共享且唯一，通过 pgdir 可以索引到整个页目录表
+	// 内核页目录表全局共享且唯一，通过 pgdir 可以索引到整个页目录表
 	// 获取虚拟地址 va 对应的页目录项的索引 PDX(va)，通过 pgdir[PDX(va)] 索引页目录项
 	// 并用(pde_t*)指针 pde 指向页目录项的虚拟地址
 	pde_t *pde = &pgdir[PDX(va)];
@@ -558,7 +552,7 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
  * 
  * 注意，size必须设置为页对齐，va 和 pa 默认传入已是页对齐的。
  * 对页表项的物理地址授予权限 perm | PTE_P
- * 此函数仅用于设置地址 UTOP 之上的 静态 映射(全局)。因此，它*不应该*更改映射页表页上的 pp_ref 字段
+ * 此函数仅用于设置地址 UTOP 之上的 静态 映射(内核,全局)。因此，它*不应该*更改映射页表页上的 pp_ref 字段
  * 做法：
  * 应用页式地址转换机制 pgdir_walk()，并且设置页表项 pte，保存二级页表映射
  * 遍历区间[va, va+size)，将每一个虚拟地址通过页表映射到物理地址空间[pa, pa+size)上，
@@ -709,46 +703,61 @@ tlb_invalidate(pde_t *pgdir, void *va)
 
 static uintptr_t user_mem_check_addr;
 
-//
-// Check that an environment is allowed to access the range of memory
-// [va, va+len) with permissions 'perm | PTE_P'.
-// Normally 'perm' will contain PTE_U at least, but this is not required.
-// 'va' and 'len' need not be page-aligned; you must test every page that
-// contains any of that range.  You will test either 'len/PGSIZE',
-// 'len/PGSIZE + 1', or 'len/PGSIZE + 2' pages.
-//
-// A user program can access a virtual address if (1) the address is below
-// ULIM, and (2) the page table gives it permission.  These are exactly
-// the tests you should implement here.
-//
-// If there is an error, set the 'user_mem_check_addr' variable to the first
-// erroneous virtual address.
-//
-// Returns 0 if the user program can access this range of addresses,
-// and -E_FAULT otherwise.
-//
+/**
+ * 内存保护
+ * 作用: 检测用户环境是否有权限访问线性地址区域[va, va+len)
+ * 在kern/syscall.c中的系统调用函数中调用，检查内存访问权限
+ * 
+ * 检查内存[va, va+len]是否允许一个环境以权限'perm|PTE_P'访问
+ * 如果:
+ * (1)该虚拟地址在ULIM下面
+ * (2)有权限访问该页表页项(物理页)权限
+ * 用户环境才可以访问该虚拟地址
+ * 
+ * 如果有错误，将user_mem_check_addr变量设置为第一个错误的虚拟地址
+ * 如果用户程序可以访问该范围的地址，则返回0，否则返回-E_FAULT
+ */ 
 int
 user_mem_check(struct Env *env, const void *va, size_t len, int perm)
 {
-	// LAB 3: Your code here.
+	// 无法限制参数va, len页对齐，且需要存储第一个访问出错的地址，va 所在的物理页需要单独处理一下，不能直接对齐
+	uintptr_t start = (uintptr_t)va;
+	uintptr_t end = ROUNDUP((uintptr_t)va + len, PGSIZE);
+	// 指向环境需要访问的页表页项(物理页)
+	pte_t *cur_pte;
+	// va对应的物理页存在才能访问
+	perm |= PTE_P;
 
+	for (uintptr_t cur_va = start; cur_va < end; cur_va += PGSIZE) {
+		// 不创建新物理页
+		cur_pte = pgdir_walk(env->env_pgdir, (void*)cur_va, 0);
+
+		// 物理页不存在 / 访问物理页的权限不足 / 当前虚拟地址 >= ULIM
+		if (!cur_pte || (*cur_pte & (perm)) != (perm) || cur_va >= ULIM) {
+			// 非法访问
+			// 将user_mem_check_addr变量设置为第一个错误的虚拟地址
+			user_mem_check_addr = cur_va;
+			// 返回值-E_FAULT
+            return -E_FAULT;
+		}
+		// 处理完va对应的第一个虚拟地址后，ROUNDDOWN向下对齐
+		cur_va = ROUNDDOWN(cur_va, PGSIZE);
+	}
 	return 0;
 }
 
-//
-// Checks that environment 'env' is allowed to access the range
-// of memory [va, va+len) with permissions 'perm | PTE_U | PTE_P'.
-// If it can, then the function simply returns.
-// If it cannot, 'env' is destroyed and, if env is the current
-// environment, this function will not return.
-//
+/**
+ * 检查是否允许环境env以perm|PTE_U|PTE_P权限访问内存范围[va, va+len]
+ * 如果可以，那么函数简单返回
+ * 如果不能，则env被销毁，如果env是当前环境，则此函数不返回
+ */ 
 void
 user_mem_assert(struct Env *env, const void *va, size_t len, int perm)
 {
 	if (user_mem_check(env, va, len, perm | PTE_U) < 0) {
 		cprintf("[%08x] user_mem_check assertion failure for "
 			"va %08x\n", env->env_id, user_mem_check_addr);
-		env_destroy(env);	// may not return
+		env_destroy(env);	// 不返回
 	}
 }
 

@@ -103,15 +103,12 @@ stab_binsearch(const struct Stab *stabs, int *region_left, int *region_right,
 }
 
 
-// debuginfo_eip(addr, info)
-//
-//	Fill in the 'info' structure with information about the specified
-//	instruction address, 'addr'.  Returns 0 if information was found, and
-//	negative if not.  But even if it returns negative it has stored some
-//	information into '*info'.
-//	使用有关指定信息的信息填写“info”结构和指令地址“addr”。 
-//	如果找到信息，则返回0，否则返回-1。 
-//	但是即使它返回负数也已经存储了一些将信息放入“*info”。
+/**
+ * debuginfo_eip(addr, info)
+ * 使用关于参数指令地址 addr 的信息填写 info 结构
+ * 如果找到信息，则返回0，否则返回-1
+ * 即使它返回负数也已经将部分信息存储到“*info”
+ */ 
 int
 debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 {
@@ -141,17 +138,22 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 		// USTABDATA.
 		const struct UserStabData *usd = (const struct UserStabData *) USTABDATA;
 
-		// Make sure this memory is valid.
-		// Return -1 if it is not.  Hint: Call user_mem_check.
-		// LAB 3: Your code here.
+		// 确保有充足的权限访问usd对应的内存. 调用user_mem_check. 
+		// 若无返回-1.
+		if (user_mem_check(curenv, (void *)usd, sizeof(struct UserStabData), PTE_U) < 0) {
+            return -1;
+        }
 
 		stabs = usd->stabs;
 		stab_end = usd->stab_end;
 		stabstr = usd->stabstr;
 		stabstr_end = usd->stabstr_end;
 
-		// Make sure the STABS and string table memory is valid.
-		// LAB 3: Your code here.
+		// 确保有权限访问 STABS 和字符串表内存.
+		if ((user_mem_check(curenv, stabs, stab_end - stabs, PTE_U) < 0) ||
+    		(user_mem_check(curenv, stabstr, stabstr_end - stabstr, PTE_U) < 0)) {
+    			return -1;
+		}
 	}
 
 	// String table validity checks
@@ -205,7 +207,6 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 	//	There's a particular stabs type used for line numbers.
 	//	Look at the STABS documentation and <inc/stab.h> to find
 	//	which one.
-	// Your code here.
 	// 查阅STABS文档可以知道表示行号的成员是n_desc
 	stab_binsearch(stabs, &lline, &rline, N_SLINE, addr);
 		// If found, set info->eip_line to the right line number.

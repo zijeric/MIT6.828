@@ -32,6 +32,8 @@ static struct Command commands[] = {
 	{"showmappings", "Display all of the physical page mappings", mon_showmappings},
 	{"setperm", "Set or clear a flag in a specific page", mon_setperm},
 	{"showmem", "Display memory", mon_showmem},
+	{"step", "Single-step debugging", mon_step},
+	{"continue", "Resume program execution", mon_continue},
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -159,6 +161,9 @@ runcmd(char *buf, struct Trapframe *tf)
 	return 0;
 }
 
+/**
+ * 返回到JOS的内核监控器(命令行)
+ */ 
 void monitor(struct Trapframe *tf)
 {
 	char *buf;
@@ -243,8 +248,6 @@ mon_showmappings(int argc, char **argv, struct Trapframe *tf)
 	uintptr_t cur_addr = start_addr;
 	while (cur_addr <= end_addr) {
 		pte_t *cur_pte = pgdir_walk(kern_pgdir, (void *) cur_addr, 0);
-		// 记录自己一个错误
-		// if ( !cur_pte) {
 		if ( !cur_pte || !(*cur_pte & PTE_P)) {
 			cprintf( "Virtual address [%08x] - not mapped\n", cur_addr);
 		} 
@@ -300,4 +303,45 @@ int mon_showmem(int argc, char **argv, struct Trapframe *tf) {
 	for (i = 0; i < n; ++i)
 		cprintf("VM at %x is %x\n", addr+i, addr[i]);
 	return 0;
+}
+
+/**
+ * JOS为了能够单步调试，需要EFLAGS的TF(Trap Flag)跟踪标志，置1则开启单步执行调试模式，置0则关闭
+ * 在单步执行模式下，处理器在每条指令后产生一个调试异常，这样在每条指令执行后都可以查看执行程序的状态
+ * 当然，为了达到观察每次调试结果，我们也同样需要将调试异常嵌入内核监控
+ * 
+ * mon_continue对应的指令是continue
+ * 由于用户程序由lib/entry.S开始执行，然后调用lib/libmain.c中的libmain函数，
+ * 可以看到最后libmain函数会调用exit，因此如果输入continue将会返回用户程序，最终触发一次系统调用并结束用户程序
+ */ 
+int mon_continue(int argc, char **argv, struct Trapframe *tf) {
+	uint32_t eflags;
+	if (!tf) {
+		cprintf("No trapped environment\n");
+		return 0;
+	}
+	eflags = tf->tf_eflags;
+	eflags &= ~FL_TF;
+	tf->tf_eflags = eflags;
+	return -1;
+}
+
+/**
+ * mon_step对应的指令是step
+ * 那么每次执行step的话，就相当于执行一次单步调试，这是因为：
+ * 当我们执行'int 3'时，eip记录了'int 3'指令的下一条用户指令的位置，然后断点异常嵌入内核监控，此时如果输入step，
+ * 内核会执行对应的mon_step函数，设置TF标志，然后返回-1；由于返回-1，内核会跳出监控程序返回用户程序，执行eip所指向的用户指令，
+ * 记录下一条指令位置，然后发生调试异常陷入内核监控，重复上述步骤即相当于每次执行一次单步调试
+ * 我们可以借助eip值和用户程序的asm文件查看每次执行的用户指令
+ */ 
+int mon_step(int argc, char **argv, struct Trapframe *tf) {
+	uint32_t eflags;
+	if (!tf) {
+		cprintf("No trapped environment\n");
+		return 0;
+	}
+	eflags = tf->tf_eflags;
+	eflags |= FL_TF;
+	tf->tf_eflags = eflags;
+	return -1;
 }

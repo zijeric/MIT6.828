@@ -1,6 +1,6 @@
 /* See COPYRIGHT for copyright information. */
 
-#include <inc/stdio.h>
+#include "inc/stdio.h"
 #include <inc/string.h>
 #include <inc/assert.h>
 
@@ -37,23 +37,36 @@ void i386_init(void)
 	// Don't touch -- used by grading script!
 	ENV_CREATE(TEST, ENV_TYPE_USER);
 #else
-	// Touch all you want. 这个宏相当于调用env_create(_binary_obj_user_hello_start, ENV_TYPE_USER)
+	// 可以随意更改
+	// 这个宏相当于调用env_create(_binary_obj_user_hello_start, ENV_TYPE_USER)
+	// 从而指定了在之后的env_run中要执行的环境，user/hello的umain环境
 	ENV_CREATE(user_hello, ENV_TYPE_USER);
 #endif // TEST*
 
 	// 目前我们只有一个用户环境，envs[0]已经在env_create的时候初始化过了
 	env_run(&envs[0]);
+	// 在函数env_run调用env_pop_tf之后，处理器开始执行trapentry.S下的代码
+	// 应该首先跳转到TRAPENTRY_NOEC(divide_handler, T_DIVIDE)处，再经过_alltraps，进入trap函数
+
+	// 进入trap函数后，先判断是否由用户态进入内核态，若是，则必须保存环境状态
+	// 也就是将刚刚得到的TrapFrame存到对应环境结构体的属性中，之后要恢复环境运行，就是从这个TrapFrame进行恢复
+	// 若中断令处理器从内核态切换到内核态，则不做特殊处理(嵌套interrupt，无需切换栈)
+
+	// 接着调用分配函数trap_dispatch，这个函数根据中断向量，调用相应的处理函数，并返回
+	// 故函数trap_dispatch返回之后，对中断的处理应当是已经完成了，该切换回触发中断的环境
+	// 修改函数trap_dispatch的代码时应注意，函数后部分(内核/环境存在bug)不应该执行，否则会销毁当前环境curenv
+	// 中断处理函数返回后，trap_dispatch应及时返回
+
+	// 切换回到旧进程，调用的是env_run，根据当前进程结构体curenv中包含和运行有关的信息，恢复进程执行
 }
 
 /*
- * Variable panicstr contains argument to first call to panic; used as flag
- * to indicate that the kernel has already called panic.
+ * 变量panicstr包含第一次调用panic()的参数; 用作标志，表示内核已经调用了死机. 
  */
 const char *panicstr;
 
 /*
- * Panic is called on unresolvable fatal errors.
- * It prints "panic: mesg", and then enters the kernel monitor.
+ * 无法解决的fatal error会导致panic. 它打印 panic:mesg，然后进入内核监视器. 
  */
 void _panic(const char *file, int line, const char *fmt, ...)
 {

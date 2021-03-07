@@ -5,13 +5,12 @@
  * This a dirt simple boot loader, whose sole job is to boot
  * an ELF kernel image from the first IDE hard disk.
  *
- * DISK LAYOUT
- *  * This program(boot.S and main.c) is the bootloader.  It should
- *    be stored in the first sector of the disk.
+ * 磁盘布局
+ *  * 这个程序(boot.S and main.c)是引导加载器程序，应该被保存在磁盘的第一个扇区
  *
- *  * The 2nd sector onward holds the kernel image.
+ *  * 第二个扇区往后保存着内核映像
  *
- *  * The kernel image must be in ELF format.
+ *  * 内核映像必须必须是ELF格式的
  *
  * BOOT UP STEPS
  *  * when the CPU boots it loads the BIOS into memory and executes it
@@ -40,11 +39,11 @@ void readseg(uint32_t, uint32_t, uint32_t);
 
 void bootmain(void)
 {
+	// ph: ELF头部的程序头，eph: ELF头部所有程序之后的结尾处
 	struct Proghdr *ph, *eph;
 
-	// read 1st page off disk
-	// 程序就将操作系统映像文件的前 0~4096(PAGESIZE 4KB) 读入内存
-	// ELFHDR(0x10000) 处, 这其中包括 ELF 文件头部
+	// 从磁盘读取出第一个页(首4096Byte)的数据 - ELFHDR
+	// 即，将操作系统映像文件的前 0~4096(PAGESIZE 4KB) 读入内存到ELFHDR(0x10000) 处, 这其中包括 ELF 文件头部
 	// 根据 ELF 文件头部规定属性格式，可以找到文件的每一段的位置
 	readseg((uint32_t)ELFHDR, SECTSIZE * 8, 0);
 
@@ -53,23 +52,23 @@ void bootmain(void)
 	// 对于一个可执行程序，通常包含存放代码的文本段(text section)，
 	// 存放全局变量的 data 段，以及存放字符串常量的 rodata 段
 
-	// is this a valid ELF?
-	// 通过判断 ELF 头部的魔数是否正确
+	// 通过判断 ELF 头部的魔数是否为正确的ELF
 	if (ELFHDR->e_magic != ELF_MAGIC)
 		// return to spin;
 		return;
 
-	// load each program segment (ignores ph flags)
+	// ph: 指向程序段头部的指针，准备加载所有程序段
 	// 从磁盘中 ELF 头之后 e_phoff(Program Header's offset)字节处读取扇区的内容，
 	// 程序头表项的起始地址包含了 Program Header Table。
 	// 这个表格存放着程序中所有段的信息。通过这个表我们才能找到要执行的代码段，数据段到底有多少等等。
 	// 反汇编：ph = 0x10000 + [0x10001c]=52 (struct Elf 内e_phoff的偏移量)
-	ph = (struct Proghdr *)((uint8_t *)ELFHDR + ELFHDR->e_phoff);
-	// 被加载的段的数量: eph = (struct Proghdr *)0x10000 + e_phoff + e_phnum;
+	ph = (struct Proghdr *)((uint8_t *) ELFHDR + ELFHDR->e_phoff);
+	// ELFHDR中程序段的数量: eph = (struct Proghdr *)0x10000 + e_phoff + e_phnum;
 	eph = ph + ELFHDR->e_phnum;
 
 	// 将内核的各个段加载进入内存，ph++(struct Proghdr)
 	for (; ph < eph; ph++)
+		// 将ELFHDR中所有的程序段信息读入 ph
 		// p_pa: 目标加载地址(期望包含该段的目的物理地址: 0x100000)，由 kernel.ld 决定内核的起始物理地址
 		// p_memsz: 在内存中的大小，p_offset: 被读取时的偏移量
 		readseg(ph->p_pa, ph->p_memsz, ph->p_offset);

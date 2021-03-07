@@ -1,5 +1,9 @@
 /* See COPYRIGHT for copyright information. */
-// 用户环境的公共定义
+/**
+ * 与Unix进程相类似，JOS环境结合了线程(thread)和地址空间(address space)的概念：线程主要通过保存寄存器的值(env_tf)来定义，地址空间主要通过保存页目录和页表页(eng_pgdir)来定义
+ * 要运行一个环境，内核必须为它设置合适的寄存器的值和合适的地址空间
+ * 在JOS系统中，因为任意时刻只能有一个环境处于活跃状态，因此JOS内核只需要一个内核栈
+ */ 
 #ifndef JOS_INC_ENV_H
 #define JOS_INC_ENV_H
 
@@ -22,7 +26,6 @@ typedef int32_t envid_t;
  * 所有实际环境都大于0(因此符号位为零)。envid_t 小于0表示错误。
  * envid_t==0 的时候是特殊的，代表当前的环境。
  */ 
-// TODO...
 #define ENV_PASTE3(x, y, z) x ## y ## z
 
 #define ENV_CREATE(x, type)						\
@@ -32,12 +35,14 @@ typedef int32_t envid_t;
 			   type);					\
 	} while (0)
 
-// NENV(1024): 以2为底的指数次数
+// NENV(1024): 以2为底的指数次数，为了方便应用左移运算
 #define LOG2NENV		10
 // 1<<10 = 2^10 = 1024，系统运行环境最多容纳 1024 个环境，即环境并发容量
 #define NENV			(1 << LOG2NENV)
-// 仅保留低 10 位(9~0)
+// 为了限制内核只能运行NENV个环境，(envid) & (NENV - 1)
 #define ENVX(envid)		((envid) & (NENV - 1))
+// 用户的DPL
+#define DPL_USER		3
 
 // Values of env_status in struct Env
 enum {

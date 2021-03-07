@@ -7,16 +7,15 @@
 #endif /* not __ASSEMBLER__ */
 
 /*
- * This file contains definitions for memory management in our OS,
- * which are relevant to both the kernel and user-mode software.
+ * 这个文件包含操作系统中内存管理的定义，与内核态和用户态软件都相关。
  */
 
-// Global descriptor numbers
-#define GD_KT     0x08     // kernel text
-#define GD_KD     0x10     // kernel data
-#define GD_UT     0x18     // user text
-#define GD_UD     0x20     // user data
-#define GD_TSS0   0x28     // Task segment selector for CPU 0
+// 全局描述符索引(选择子)
+#define GD_KT     0x08     // 内核代码
+#define GD_KD     0x10     // 内核数据
+#define GD_UT     0x18     // 用户代码
+#define GD_UD     0x20     // 用户数据
+#define GD_TSS0   0x28     // CPU0的TSS(任务状态段选择子)
 
 /**
  * JOS处理器的32位线性地址空间分为两部分，内核控制 ULIM 分割线以上的部分，为内核保留大约256MB(0xf000000-0xffffffff)的虚拟地址空间，
@@ -25,8 +24,8 @@
  * 用户环境将没有对以上 ULIM 内存的任何权限，只有内核能够读写这个内存；
  * [UTOP, ULIM]，内核和用户环境都可以读取但不能写入这个地址范围，此地址范围用于向用户环境公开某些只读内核数据结构；
  * UTOP 下的地址空间供用户环境使用;用户环境将设置访问此内存的权限。
- */
-/*
+ *
+ *
  * Virtual memory map:                                Permissions
  *                                                    kernel/user
  *
@@ -126,8 +125,7 @@
 #define UENVS		(UPAGES - PTSIZE)
 
 /*
- * Top of user VM. User can manipulate VA from UTOP-1 and down!
- * 用户 VM 的顶部。用户可以从 UTOP-1 向下操作 VA
+ * 用户虚拟内存的顶部，用户只可以操作[0,UTOP-1]的虚拟内存
  */
 
 // Top of user-accessible VM
@@ -185,14 +183,6 @@ extern volatile pde_t uvpd[];     // VA of current page directory
 #endif
 
 /*
- * Page descriptor structures, mapped at UPAGES.
- * Read/write to the kernel, read-only to user programs.
- *
- * Each struct PageInfo stores metadata for one physical page.
- * Is it NOT the physical page itself, but there is a one-to-one
- * correspondence between physical pages and struct PageInfo's.
- * You can map a struct PageInfo * to the corresponding physical address
- * with page2pa() in kern/pmap.h.
  *
  * 页结构，映射到 UPAGES
  * 内核: 读/写，用户程序: 只读

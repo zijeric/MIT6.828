@@ -11,41 +11,42 @@
 #include <kern/syscall.h>
 #include <kern/console.h>
 
-// Print a string to the system console.
-// The string is exactly 'len' characters long.
-// Destroys the environment on memory errors.
+/**
+ * 将字符串s打印到系统控制台，字符串长度正好是len个字符
+ * 无权限访问内存就销毁环境
+ */ 
 static void
 sys_cputs(const char *s, size_t len)
 {
-	// Check that the user has permission to read memory [s, s+len).
-	// Destroy the environment if not.
+	// 调用user_mem_assert检查用户是否有权限读取内存[s, s+len]，如果没有就销毁环境
+	user_mem_assert(curenv, s, len, 0);
 
-	// LAB 3: Your code here.
-
-	// Print the string supplied by the user.
+	// 打印用户提供的字符串.
 	cprintf("%.*s", len, s);
 }
 
-// Read a character from the system console without blocking.
-// Returns the character, or 0 if there is no input waiting.
+/**
+ * 在不阻塞的情况下从系统控制台读取字符
+ * 返回字符，如果没有输入等待，则返回0
+ */
 static int
 sys_cgetc(void)
 {
 	return cons_getc();
 }
 
-// Returns the current environment's envid.
+// 返回当前环境的envid.
 static envid_t
 sys_getenvid(void)
 {
 	return curenv->env_id;
 }
 
-// Destroy a given environment (possibly the currently running environment).
-//
-// Returns 0 on success, < 0 on error.  Errors are:
-//	-E_BAD_ENV if environment envid doesn't currently exist,
-//		or the caller doesn't have permission to change envid.
+/**
+ * 销毁envid对应的环境(可能是当前运行的环境)
+ * 
+ * 成功返回0，错误返回< 0；错误:-E_BAD_ENV(环境envid当前不存在，或者调用者没有修改envid的权限)
+ */ 
 static int
 sys_env_destroy(envid_t envid)
 {
@@ -62,19 +63,40 @@ sys_env_destroy(envid_t envid)
 	return 0;
 }
 
-// Dispatches to the correct kernel function, passing the arguments.
+/**
+ * syscall函数: 根据 syscallno 分派到对应的内核调用处理函数，并传递参数.
+ * 参数:
+ * syscallno: 系统调用序号(inc/syscall.h)，告诉内核要使用那个处理函数，进入寄存器eax
+ * a1~a5: 传递给内核处理函数的参数，进入剩下的寄存器edx, ecx, ebx, edi, esi
+ * 这些寄存器都在中断产生时被压栈了，可以通过Trapframe访问到
+ */ 
 int32_t
 syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
 {
-	// Call the function corresponding to the 'syscallno' parameter.
-	// Return any appropriate return value.
-	// LAB 3: Your code here.
-
-	panic("syscall not implemented");
+	// 调用对应于'syscallno'参数的函数.
+	int32_t result = 0;
 
 	switch (syscallno) {
-	default:
-		return -E_INVAL;
+
+		case SYS_cputs:
+			sys_cputs((const char*)a1, a2);
+			break;
+
+		case SYS_cgetc:
+			result = sys_cgetc();
+			break;
+
+		case SYS_getenvid:
+			result = sys_getenvid();
+			break;
+
+		case SYS_env_destroy:
+			result = sys_env_destroy((envid_t)a1);
+			break;
+
+		default:
+			result = -E_INVAL;
 	}
+	return result;
 }
 

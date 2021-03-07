@@ -42,6 +42,7 @@ vcprintf(const char *fmt, va_list ap)
 	b.idx = 0;
 	b.cnt = 0;
 	vprintfmt((void*)putch, &b, fmt, ap);
+	// 调用lib/syscall.c中的sys_cputs()
 	sys_cputs(b.buf, b.idx);
 
 	return b.cnt;

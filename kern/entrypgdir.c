@@ -10,7 +10,7 @@ pte_t entry_pgtable[NPTENTRIES];
  * 这个区域对于 entry.S 的一些指令是至关重要的。之后我们就再也不用它了。
  * 
  * 页目录(和页表)必须从 page boundary(页对齐格式) 开始，因此使用"__aligned__"属性。此外，由于与链接和静态初始化器相关的限制，
- * 我们在这里使用“x + PTE_P”，而不是更标准的“x | PTE_P”。在其他地方，你应该使用“|”来组合 flags。
+ * 我们在这里使用 x+PTE_P，而不是更标准的 x|PTE_P。在其他地方，你应该使用“|”来组合 flags。
  */ 
 // 强制编译器分配给 entry_pgdir 的空间地址是4096字节(一页大小)对齐的
 __attribute__((__aligned__(PGSIZE)))

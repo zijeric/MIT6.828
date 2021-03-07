@@ -9,11 +9,10 @@
 
 /*
  *
- *	Part 1.  Paging data structures and constants.
+ *	Part 1.  分页需要的数据机构和常数.
  *
  */
 
-// A linear address 'la' has a three-part structure as follows:
 // 线性地址“ la”有三部分结构，如下：
 // 
 // +--------10------+-------10-------+---------12----------+
@@ -23,9 +22,6 @@
 //  \--- PDX(la) --/ \--- PTX(la) --/ \---- PGOFF(la) ----/
 //  \---------- PGNUM(la) ----------/
 //
-// The PDX, PTX, PGOFF, and PGNUM macros decompose linear addresses as shown.
-// To construct a linear address la from PDX(la), PTX(la), and PGOFF(la),
-// use PGADDR(PDX(la), PTX(la), PGOFF(la)).
 // PDX、PTX、PGOFF 和 PGNUM 宏分解线性地址，如下所示。
 // 从 PDX (la)、PTX(la)和 PGOFF(la)构造线性地址 la，
 // 使用 PGADDR(PDX(la)，PTX(la)，PGOFF(la))。
@@ -131,7 +127,7 @@
 
 /*
  *
- *	Part 2.  Segmentation data structures and constants.
+ *	Part 2.  分段需要的数据结构和常数.
  *
  */
 
@@ -215,11 +211,11 @@ struct Segdesc {
 
 #ifndef __ASSEMBLER__
 
-// Task state segment format (as described by the Pentium architecture book)
+// 任务状态段TSS(Task state segment)格式  (参照奔腾架构书)
 struct Taskstate {
-	uint32_t ts_link;	// Old ts selector
-	uintptr_t ts_esp0;	// Stack pointers and segment selectors
-	uint16_t ts_ss0;	//   after an increase in privilege level
+	uint32_t ts_link;	// 前-任务状态选择子
+	uintptr_t ts_esp0;	// 栈指针
+	uint16_t ts_ss0;	// 提高特权级别为0之后，使用ss0:esp0定义内核栈的位置
 	uint16_t ts_padding1;
 	uintptr_t ts_esp1;
 	uint16_t ts_ss1;
@@ -227,10 +223,10 @@ struct Taskstate {
 	uintptr_t ts_esp2;
 	uint16_t ts_ss2;
 	uint16_t ts_padding3;
-	physaddr_t ts_cr3;	// Page directory base
-	uintptr_t ts_eip;	// Saved state from last task switch
+	physaddr_t ts_cr3;	// 页目录基址
+	uintptr_t ts_eip;	// 保存上次任务切换的状态
 	uint32_t ts_eflags;
-	uint32_t ts_eax;	// More saved state (registers)
+	uint32_t ts_eax;	// 保存x86所有寄存器
 	uint32_t ts_ecx;
 	uint32_t ts_edx;
 	uint32_t ts_ebx;
@@ -238,7 +234,7 @@ struct Taskstate {
 	uintptr_t ts_ebp;
 	uint32_t ts_esi;
 	uint32_t ts_edi;
-	uint16_t ts_es;		// Even more saved state (segment selectors)
+	uint16_t ts_es;		// 保存x86所有段选择子
 	uint16_t ts_padding4;
 	uint16_t ts_cs;
 	uint16_t ts_padding5;
@@ -253,36 +249,33 @@ struct Taskstate {
 	uint16_t ts_ldt;
 	uint16_t ts_padding10;
 	uint16_t ts_t;		// Trap on task switch
-	uint16_t ts_iomb;	// I/O map base address
+	uint16_t ts_iomb;	// I/O 映射基址
 };
 
-// Gate descriptors for interrupts and traps
+// interrupts and traps gate 的描述符结构体
+// 优先级低的代码无法访问优先级高的代码，优先级高低由 gd_dpl 判断。数字越小越高
 struct Gatedesc {
-	unsigned gd_off_15_0 : 16;   // low 16 bits of offset in segment
-	unsigned gd_sel : 16;        // segment selector
-	unsigned gd_args : 5;        // # args, 0 for interrupt/trap gates
-	unsigned gd_rsv1 : 3;        // reserved(should be zero I guess)
-	unsigned gd_type : 4;        // type(STS_{TG,IG32,TG32})
-	unsigned gd_s : 1;           // must be 0 (system)
-	unsigned gd_dpl : 2;         // descriptor(meaning new) privilege level
-	unsigned gd_p : 1;           // Present
-	unsigned gd_off_31_16 : 16;  // high bits of offset in segment
+	unsigned gd_off_15_0 : 16;   // 段中低16位的偏移量
+	unsigned gd_sel : 16;        // 段选择子
+	unsigned gd_args : 5;        // # args, 0: interrupt/trap gates
+	unsigned gd_rsv1 : 3;        // 保留位(should be zero I guess)
+	unsigned gd_type : 4;        // 类型(STS_{TG,IG32,TG32})
+	unsigned gd_s : 1;           // 必须为0 (system)
+	unsigned gd_dpl : 2;         // 描述符(新的)特权级别
+	unsigned gd_p : 1;           // 存在位
+	unsigned gd_off_31_16 : 16;  // 段中高16位的偏移量
 };
 
-// Set up a normal interrupt/trap gate descriptor.
-// - istrap: 1 for a trap (= exception) gate, 0 for an interrupt gate.
-    //   see section 9.6.1.3 of the i386 reference: "The difference between
-    //   an interrupt gate and a trap gate is in the effect on IF (the
-    //   interrupt-enable flag). An interrupt that vectors through an
-    //   interrupt gate resets IF, thereby preventing other interrupts from
-    //   interfering with the current interrupt handler. A subsequent IRET
-    //   instruction restores IF to the value in the EFLAGS image on the
-    //   stack. An interrupt through a trap gate does not change IF."
-// - sel: Code segment selector for interrupt/trap handler
-// - off: Offset in code segment for interrupt/trap handler
-// - dpl: Descriptor Privilege Level -
-//	  the privilege level required for software to invoke
-//	  this interrupt/trap gate explicitly using an int instruction.
+// 设置正常的 interrupt/trap gate 描述符。
+// - istrap: 1->trap(=exception)gate，0->interrupt gate
+	//	根据i386参考文献的9.6.1.3部分:“interrupt gate和trap gate的区别在于对 IF(interrupt-enable中断使能标志) 的影响
+	//	通过 interrupt gate 引导的中断会将IF标志位复位，从而防止其他中断干扰当前的 中断处理程序(interrupt handler)
+	//	随后的 IRET指令 将IF标志位恢复到栈上的 EFLAGS 映像中的值
+	//	但是，通过 trap(=exception)gate 的中断不会改变IF标志位. ”
+// - sel: interrupt/trap handler 的代码段选择子
+// - off: interrupt/trap handler 的代码段中的偏移量
+// - dpl: 描述符特权级别(DPL) -
+//    软件使用 int 指令显式调用该 interrupt/trap gate 所需的特权级别
 #define SETGATE(gate, istrap, sel, off, dpl)			\
 {								\
 	(gate).gd_off_15_0 = (uint32_t) (off) & 0xffff;		\
@@ -312,8 +305,8 @@ struct Gatedesc {
 
 // Pseudo-descriptors used for LGDT, LLDT and LIDT instructions.
 struct Pseudodesc {
-	uint16_t pd_lim;		// Limit
-	uint32_t pd_base;		// Base address
+	uint16_t pd_lim;		// 界限Limit
+	uint32_t pd_base;		// 基址Base
 } __attribute__ ((packed));
 
 #endif /* !__ASSEMBLER__ */

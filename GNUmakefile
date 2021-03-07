@@ -23,15 +23,12 @@ LABSETUP ?= ./
 
 TOP = .
 
-# Cross-compiler jos toolchain
+# 交叉编译器JOS工具链
 #
-# This Makefile will automatically use the cross-compiler toolchain
-# installed as 'i386-jos-elf-*', if one exists.  If the host tools ('gcc',
-# 'objdump', and so forth) compile for a 32-bit x86 ELF target, that will
-# be detected as well.  If you have the right compiler toolchain installed
-# using a different name, set GCCPREFIX explicitly in conf/env.mk
-
-# try to infer the correct GCCPREFIX
+# 这个Makefile将自动使用安装为 i386-jos-elf-* 的交叉编译器工具链(如果有的话)。如果主机工具('gcc'，'objdump'等等)为32位x86 ELF目标编译，也将被检测到。
+# 如果您使用不同的名称安装了正确的编译器工具链，请在onf/env.mk中显式设置GCCPREFIX
+#
+# 尝试推断正确的GCCPREFIX
 ifndef GCCPREFIX
 GCCPREFIX := $(shell if i386-jos-elf-objdump -i 2>&1 | grep '^elf32-i386$$' >/dev/null 2>&1; \
 	then echo 'i386-jos-elf-'; \
